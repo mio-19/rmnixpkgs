@@ -269,6 +269,24 @@ in
       description = "Declarative vellum (apk) package list, Homebrew-module style.";
     };
 
+    # What rmpp_kernel carries on top of reMarkable's published tree. Their
+    # kernel is frozen at one stable level, so every upstream fix after it — the
+    # security fixes included — is missing. The chain itself is pinned in os.nix
+    # (`kernel.stable`); this is only the switch, because whether to run a
+    # patched kernel is a property of this device's build.
+    kernel.securityPatches = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Apply the upstream stable chain pinned in os.nix (`kernel.stable`) to
+          rmpp_kernel. Off builds reMarkable's tree exactly as published.
+          Either way the generation records the kernel release it expects, and
+          activation checks `uname -r` against it.
+        '';
+      };
+    };
+
     # What this generation was built for. Read-only: the release is declared
     # once, in os.nix, because the kernel source pin and the userland ABI both
     # derive from it — a second copy set here could disagree with the packages
@@ -440,6 +458,12 @@ in
               "glibc=${cfg.os.glibc}"
               "qt=${cfg.os.qt}"
               "kernel-version=${cfg.os.kernelVersion}"
+              "kernel-patches=${
+                if cfg.kernel.securityPatches.enable then
+                  "${toString os.kernel.stable.first}..${toString os.kernel.stable.last}"
+                else
+                  "none"
+              }"
             ]}
 
             runHook postInstall

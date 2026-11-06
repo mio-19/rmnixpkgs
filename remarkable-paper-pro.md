@@ -255,6 +255,37 @@ point `kernel.nix` at the matching branch tarball from
 reMarkable OS update replaces the rootfs slot, so the kernel has to be
 reinstalled afterwards.
 
+##### Kernel security updates
+
+reMarkable's kernel is frozen at one stable level (6.12.49) and does not move
+between OS releases, so every fix the stable maintainers shipped afterwards —
+the security fixes included — is missing from the stock kernel and from a plain
+rebuild of their tree. `os.nix` therefore pins the full upstream incremental
+chain from [kernel.org](https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/)
+(`kernel.stable`: 6.12.49 → 6.12.115, 66 patches, one SRI hash each), and
+`kernel.nix` applies it to that tree before the GPU patch. With it on, the
+kernel is **6.12.115-waydroid** — which is also what the configuration
+generation records and what activation compares `uname -r` against.
+
+```nix
+# config.nix
+kernel.securityPatches.enable = true; # default; false = the vendor tree as published
+```
+
+The chain goes in with GNU `patch` (`--forward`, so a fix the vendor tree
+already carries is skipped rather than reversed; `--fuzz=2` for line drift), best
+effort by design: reMarkable's tree is an NXP release, so upstream context has
+drifted in the files they changed. Measured on the real tree: **25 of the 66
+patches apply cleanly, 41 partially, 100 hunks find no matching context** —
+mostly `imx8-isi`, Freescale networking (`enetc`, `dpaa2`), `fsl-edma`,
+`gpio-mxc`, `pmdomain/imx` and i.MX device trees, plus a few core files
+(`arch/arm64/include/asm/io.h`, `phylink.c`, `spi-imx.c`). Nothing is dropped
+silently: the build prints the summary, and the output carries
+`share/rmpp-kernel/security-patches` (per patch) and
+`share/rmpp-kernel/security-patch-rejects` (every hunk that did not apply).
+Whether those partial applications still compile is **not** known yet — the
+kernel build has not been run here; see `TODO.md`.
+
 Syncthing is useful headless: run it under `/home/root` and point the web UI at
 the device over USB or Wi-Fi.
 

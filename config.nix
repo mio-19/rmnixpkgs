@@ -75,6 +75,13 @@
       };
     };
 
+    # Kernel security updates. reMarkable freezes its kernel at one stable level
+    # (os.nix `kernel.version`), so rmpp_kernel applies the upstream stable chain
+    # pinned in os.nix (`kernel.stable`) on top of it; that is where the kernel
+    # security fixes come from. Set to false to build the vendor tree exactly as
+    # published — expect kernel 6.12.49-waydroid instead, and no fixes after it.
+    kernel.securityPatches.enable = true;
+
     # Mask reMarkable's OTA updater. An unattended update replaces the rootfs
     # (rmpp-config.service included) and boots the stock kernel again, undoing
     # both rmpp_kernel and this layer. To take an update on purpose: set

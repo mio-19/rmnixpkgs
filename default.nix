@@ -37,16 +37,54 @@
       # of https://github.com/numtide/system-manager: a module describes the
       # device, evaluation produces a generation, activate.sh applies it and a
       # boot unit re-applies it because /etc is a tmpfs overlay.
-      rmppConfig = lib.evalModules {
-        modules = [
-          ./system.nix
-          ./config.nix
-        ];
-        specialArgs = {
-          inherit lib os;
-          pkgs = rmppPkgs;
+      mkConfig =
+        osForConfig:
+        lib.evalModules {
+          modules = [
+            ./system.nix
+            ./config.nix
+          ];
+          specialArgs = {
+            inherit lib;
+            os = osForConfig;
+            pkgs = rmppPkgs;
+          };
         };
+
+      # Two-phase on purpose: the kernel's version depends on
+      # `rmpp.kernel.securityPatches.enable`, and that switch lives in
+      # config.nix, so the module is evaluated once with the release exactly as
+      # os.nix pins it to read the switch, then — only when the stable chain is
+      # on — again with the version that chain produces. The second evaluation
+      # is the generation that gets built and activated, so `$out/os` records
+      # 6.12.115 and activation compares `uname -r` against 6.12.115-waydroid
+      # instead of the vendor's 6.12.49-waydroid.
+      baseConfig = mkConfig os;
+      applyStablePatches = baseConfig.config.rmpp.kernel.securityPatches.enable;
+      kernelVersion =
+        if applyStablePatches then
+          "${lib.versions.majorMinor os.kernel.version}.${toString os.kernel.stable.last}"
+        else
+          os.kernel.version;
+
+      rmpp_kernel = rmppPkgs.callPackage ./kernel.nix {
+        inherit os applyStablePatches kernelVersion;
+        configFragment = "${upstream}/kernel/waydroid.cfg";
+        gpuDeviceTreePatch = "${upstream}/kernel/gpu-etnaviv-dt.patch";
       };
+
+      rmppConfig =
+        if applyStablePatches then
+          mkConfig (
+            os
+            // {
+              kernel = os.kernel // {
+                version = kernelVersion;
+              };
+            }
+          )
+        else
+          baseConfig;
 
       # Device-side files from
       # https://github.com/MaximeRivest/android-on-remarkable-paper-pro
@@ -222,14 +260,12 @@
         rmpp_android_files = androidFiles;
 
         # reMarkable OS kernel + Waydroid requirements + the Vivante/etnaviv GPU
-        # driver (kernel.nix). Native aarch64: a kernel build wants a real
-        # aarch64 CPU, hours on many cores, ~30 GB of tree.
+        # driver (kernel.nix), plus the upstream stable security chain from
+        # os.nix on top unless `rmpp.kernel.securityPatches.enable = false`.
+        # Native aarch64: a kernel build wants a real aarch64 CPU, hours on many
+        # cores, ~30 GB of tree.
         # nix build .#rmpp_kernel -o rmpp-kernel
-        rmpp_kernel = rmppPkgs.callPackage ./kernel.nix {
-          inherit os;
-          configFragment = "${upstream}/kernel/waydroid.cfg";
-          gpuDeviceTreePatch = "${upstream}/kernel/gpu-etnaviv-dt.patch";
-        };
+        inherit rmpp_kernel;
 
         # nix build .#rmpp_config -o rmpp-config
         # scp/copy the closure, then on the device:

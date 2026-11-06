@@ -58,6 +58,14 @@ the only one that renders), `.#rmpp_android` / `.#rmpp_android_files`,
       source + upstream's `ferrari_defconfig`/`waydroid.cfg` recipe +
       `gpu-etnaviv-dt.patch`, producing fitImage, Image, dtbs and a modules
       tarball in the shape `install-kernel.sh` expects.
+- [x] Kernel security updates: `os.nix` pins the whole upstream stable chain
+      (66 incremental patches, 6.12.49 → 6.12.115, one SRI hash each) and
+      `kernel.nix` applies it before the GPU patch,
+      `--forward --fuzz=2`, best effort because the vendor tree has drifted.
+      `rmpp.kernel.securityPatches.enable` (config.nix, default **on**) is the
+      switch; `default.nix` records 6.12.115 as the kernel release when it is
+      on, and activation compares `uname -r` against 6.12.115-waydroid. The
+      build prints what applied and ships the rejects. Not compiled yet.
 - [x] `nixfmt` clean; every package evaluates (`nix eval .#…drvPath`);
       `.#rmpp_tools` verified to substitute from cache.nixos.org (aarch64 ELF).
 - [x] Docs: `remarkable-paper-pro.md` covers the flake, the source build and the
@@ -149,7 +157,25 @@ the only one that renders), `.#rmpp_android` / `.#rmpp_android_files`,
   `mkimage -f ferrari.its fitImage`. `ferrari.its` ships in the tarball and
   refers to `arch/...` relatively (that is why the build is in-tree here).
 - `waydroid.cfg` sets `CONFIG_LOCALVERSION="-waydroid"`, so the release is
-  `6.12.49-waydroid`; modules land in `/lib/modules/<release>` on the device.
+  `6.12.49-waydroid` (`6.12.115-waydroid` with the stable chain on); modules
+  land in `/lib/modules/<release>` on the device.
+- Stable chain, measured on the real tree (x86_64 host, GNU patch 2.8,
+  `patch -p1 --batch --forward --fuzz=2`, 66 patches 6.12.49 → 6.12.115):
+  **25 apply cleanly, 41 partially, 100 hunks rejected**; the Makefile still
+  lands on `SUBLEVEL = 115`, so no patch to the version was lost. Rejects sit
+  where reMarkable's NXP base differs from vanilla: `imx8-isi`,
+  `freescale` networking (`enetc`, `dpaa2`), `fsl-edma`, `gpio-mxc`,
+  `pmdomain/imx`, `fsl_sai`/`ak4458`, i.MX `*.dtsi` — plus a few core ones:
+  `arch/arm64/include/asm/io.h`, `tlbflush.h`, `drivers/bus/simple-pm-bus.c`,
+  `drivers/net/phy/phylink.c`, `drivers/spi/spi-imx.c`.
+- `patch --forward` also *silently skips* hunks the tree already contains
+  ("Reversed (or previously applied) patch detected") — several NXP fixes are
+  already in reMarkable's tree that way. That is why the chain reports per patch
+  instead of trusting an exit code. The build counts a patch as partial when it
+  leaves a `.rej` **or** when its log shows `FAILED` / `can't find file to
+  patch`, which is why the shipped counter says 25 clean / 41 partial where a
+  naive "no `.rej` file" tally says 26 / 40: one patch only skipped hunks for
+  files the vendor tree does not have.
 - GPU: `gpu-etnaviv-dt.patch` rewrites `gpu@38000000` in `imx8mm.dtsi` to
   `compatible = "vivante,gc"`, `status = "okay"`, clocks `reg/bus/core/shader`;
   the fragment adds `CONFIG_DRM_ETNAVIV=m` + `CONFIG_DRM_SCHED=m`. Stock OS has
@@ -225,8 +251,13 @@ option 1.
       (mesa's etnaviv drivers are linked into `$env/lib/dri`).
 - [ ] Build `.#rmpp_kernel` on aarch64 hardware and check the output: fitImage
       packs Image+dtbs, `CONFIG_DRM_ETNAVIV=m` present in
-      `share/rmpp-kernel/config`, `6.12.49-waydroid` module tree, patched
-      `imx8mm-ferrari.dtb` in `dtbs/`.
+      `share/rmpp-kernel/config`, a `6.12.115-waydroid` module tree, patched
+      `imx8mm-ferrari.dtb` in `dtbs/` — and whether the stable chain compiles:
+      `share/rmpp-kernel/security-patches` should read 25 applied / 41 partial,
+      `security-patch-rejects` the 100 hunks that found no context. If one of
+      those rejects breaks the build, backport that file by hand (vendored, not
+      reformatted) or set `rmpp.kernel.securityPatches.enable = false` and
+      record why here.
 - [ ] Flash the kernel on a device (after the backup) and verify
       `/dev/dri/renderD128` appears, `etnaviv` is in dmesg, and Mesa's etnaviv
       driver loads; then check whether rmweb can use it
