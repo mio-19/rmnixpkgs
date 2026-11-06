@@ -82,7 +82,7 @@
     # On: the built kernel is 6.12.115-waydroid (default.nix records that, and
     # activation compares `uname -r` against it). The chain cannot apply cleanly
     # to an NXP vendor tree, so kernel.nix carries the backports and the port
-    # the tree needs to compile, and ships what it could not place under
+    # the tree needs to compile, and ships what it could not land as
     # share/rmpp-kernel/security-patch-*. The ported set is in TODO.md.
     #
     # Off: the vendor tree exactly as reMarkable published it
