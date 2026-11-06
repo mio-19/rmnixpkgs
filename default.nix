@@ -173,8 +173,8 @@
         # from what this repository shipped before the flake. Kept deliberately:
         # it links against the device's own Qt 6.10.3 and so renders through
         # libepaper.so today, while the nixpkgs-Qt build above has no display
-        # path until the QTFB work lands (see TODO.md). Drop it once the source
-        # build is verified on device.
+        # path until the source build renders on device (see TODO.md). Keep it
+        # for now: that is still the artifact that actually displays today.
         # nix build .#rmpp_rmweb_prebuilt -o rmweb-bundle
         # Bump: set `version` to the new tag, then take the asset URL below and
         #   nix store prefetch-file --hash-type sha256 <url>

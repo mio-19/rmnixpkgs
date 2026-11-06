@@ -102,18 +102,22 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   ≥ 4.4 rejects the malformed `if()` that `Source/cmake/WebKitMacros.cmake`
   generates for a framework not yet linked anywhere (upstream fix applied with
   `substituteInPlace`, URLs in the file).
-- `rmweb` 0.9.7: **links against that engine**. `wpe-webkit-2.0.pc` declares
-  `Requires: glib-2.0 libsoup-3.0 wpe-1.0 wpe-platform-2.0`, and pkg-config
-  resolves a `.pc` file's Requires through the *consumer's* `PKG_CONFIG_PATH`,
-  so the app needs `libsoup_3` and `libwpe` in `buildInputs` (moving them to
+- `rmweb` 0.9.7: **compiles and links** against that engine. `wpe-webkit-2.0.pc`
+  declares `Requires: glib-2.0 libsoup-3.0 wpe-1.0 wpe-platform-2.0`, and
+  pkg-config resolves a `.pc` file's `Requires` through the *consumer's*
+  `PKG_CONFIG_PATH`,so the app needs `libsoup_3` and `libwpe` in `buildInputs` (moving them to
   `wpewebkit.nix`'s `propagatedBuildInputs` would be tidier for every consumer
   but rebuilds the engine). Two install-side requirements: `dontWrapQtApps =
   true`, because `rmweb.nix` builds its own wrapper and Qt's hook would wrap it
   again, and `install -d $out/bin` before the `rmweb` symlink (everything else
-  goes to `libexec/`/`share/rmweb`). Verified: AArch64 ELF PIE, `ldd` reports
-  no unresolved sonames, RUNPATH is `$ORIGIN/../lib` plus the Qt/WPE/glib/
-  libsoup/libwpe/glibc/gcc-lib store dirs, and the wrapper carries
-  `WEBKIT_INJECTED_BUNDLE_PATH`, `GALLIUM_DRIVER`, `QT_QPA_PLATFORM`.
+  goes to `libexec/`/`share/rmweb`). Compilation verified on this host against
+  nixpkgs' aarch64 toolchain: AArch64 ELF PIE, `ldd` reports no unresolved
+  sonames, RUNPATH is `$ORIGIN/../lib` plus the Qt/WPE/glib/libsoup/libwpe/
+  glibc/gcc-lib store dirs, and the wrapper carries
+  `WEBKIT_INJECTED_BUNDLE_PATH`, `GALLIUM_DRIVER`, `QT_QPA_PLATFORM`. The
+  derivation sits at
+  `/nix/store/hqmzq7g6j4l03hqy9ci3rrzgiqbcb1wg-rmweb-0.9.7.drv`; it has **not**
+  rendered a frame on device — the display path is still open (see below).
 - `rmpp_kernel` 6.12.49-waydroid (chain off): **builds**, in about 4 minutes at
   `--cores 6` once the toolchain is warm. Verified output: `fitImage` 15 MB
   (FIT built by `mkimage -f ferrari.its`; the build log lists `kernel-1` and
@@ -125,12 +129,15 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   `CONFIG_DRM_SCHED=m`, `CONFIG_LOCALVERSION="-waydroid"`. With the chain off
   there is deliberately no `share/rmpp-kernel/security-*` file: absence means
   "no fixes applied", not "all applied".
-- `rmpp_kernel` 6.12.115-waydroid (chain on, the default): **builds**, same
-  recipe and time. Verified: `fitImage` 15,548,032 bytes, `Image` 15,335,432,
-  605 dtbs (4 `ferrari-rev-*`), modules in `lib/modules/6.12.115-waydroid`
-  plus a 3.8 MB tarball, `CONFIG_DRM_ETNAVIV=m`/`CONFIG_DRM_SCHED=m`, and
+- `rmpp_kernel` 6.12.115-waydroid (chain on): **builds**, same recipe and time.
+  Verified: `fitImage` 15,548,032 bytes, `Image` 15,335,432, 605 dtbs (4
+  `ferrari-rev-*`), modules in `lib/modules/6.12.115-waydroid` plus 3.8 MB
+  tarball, `CONFIG_DRM_ETNAVIV=m`/`CONFIG_DRM_SCHED=m`, and
   `share/rmpp-kernel/security-patches` recording 25 clean / 41 partial and the
-  100 rejected hunks, plus every backport and port applied.
+  100 rejected hunks, plus every backport and port applied. That is the default;
+  the derivation is the build-time chain application, not a committed reversed
+  artifact (see below).
+
 - A `make -k` sweep in a `--keep-failed` tree is useful for listing failures
   but is not proof: it once hid an `io_uring` error because the `.o` predated
   the patch that broke it. The clean `nix build` is the arbiter.
@@ -288,6 +295,12 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   listed per file in `share/rmpp-kernel/security-patch-rejects`, and sit in
   NXP/vendor code (`imx8-isi`, `enetc`, `fsl-edma`, i.MX dtsi, …) whose context
   vanilla upstream does not have. Nothing was reformatted to make one apply.
+- **Compilation under the security chain has been run**, for the first time when
+  this was written. The previous sentence still holds: the build compiles with
+  the 25 clean / 41 partial applied, by carrying those eight patches plus the
+  build-time syscore revert, and the 100 rejects remain what they were. The
+  build is the base case the checklist depends on; chasing the 100 rejects is
+  the next item, not a precondition for it.
 
 ### Ecosystem on the device (what a config layer must not break)
 - **vellum** (`https://github.com/vellum-dev/vellum`, apk-based) keeps
@@ -382,8 +395,11 @@ option 1.
 - [ ] Drop `rmpp_rmweb_prebuilt` once the source build renders on device.
 - [ ] Keep hashes current: `wpewebkit.nix` (tarball) and the `v0.9.7` tag
       (`fetchFromGitHub`), plus upstream's bundle while it is still shipped.
-- [ ] Update `TODO.md`/commit as each item lands; do not hand-edit generated
-      files; `nixfmt` every `.nix` touched.
+- [x] Update `TODO.md`/commit as each item lands; do not hand-edit generated
+      files; `nixfmt` every `.nix` touched. (Today's landing: mark the two source
+      builds and the chain-compile done, and align the docs with what this host
+      has verified. Limitations recorded: no device test, no re-render, 100
+      rejects still open.)
 
 ## How to resume
 

@@ -131,7 +131,9 @@ Caveat, and it is the important one: **the stock display path needs the
 device's Qt**. `xochitl` presents through the closed-source `libepaper.so` QPA
 plugin built against **Qt 6.10.3**, and a QPA plugin is refused on any other Qt
 version, so the app built against nixpkgs Qt 6.12 compiles but has no panel to
-draw on with reMarkable's own plugin.
+draw on with reMarkable's own plugin. (The nixpkgs-Qt build is the compile-only
+package until the QTFB path lands; the prebuilt bundle — still shipped — is the
+artifact that actually renders today.)
 
 **QTFB is the community answer to that.**
 ([asivery/qtfb](https://github.com/asivery/qtfb), now merged into
@@ -164,9 +166,9 @@ preference:
    build configuration, and it breaks again with every OS update that bumps Qt.
 4. Accept a compile-only package for CI, with no rendering on device.
 
-Until one of those lands, `rmpp_rmweb_prebuilt` still ships upstream's release
-bundle — unchanged from what this repository used before the flake — which uses
-the device's own Qt 6.10.3 and therefore does render today:
+Until the source build renders on device, `rmpp_rmweb_prebuilt` still ships
+upstream's release bundle — unchanged from what this repository used before the
+flake — which uses the device's own Qt 6.10.3 and therefore does render today:
 
 ```sh
 nix build .#rmpp_rmweb_prebuilt -o rmweb-bundle
@@ -276,8 +278,12 @@ mostly `imx8-isi`, Freescale networking (`enetc`, `dpaa2`), `fsl-edma`,
 silently: the build prints the summary, and the output carries
 `share/rmpp-kernel/security-patches` (per patch) and
 `share/rmpp-kernel/security-patch-rejects` (every hunk that did not apply).
-Whether those partial applications still compile is **not** known yet — the
-kernel build has not been run here; see `TODO.md`.
+The partial applications **do** compile: this tree is the build-time chain
+application (the derivation that runs GNU `patch` for all 66 levels, then
+carries eight small ports and builds the derived syscore-revert), and the
+result is the `/nix/store/rd8z2cbs4fgr12sykcgvpkmq7kcg2waa-rmpp-kernel-6.12.115`
+closure. The 100 rejects remain what they were — the build would be lying if it
+claimed otherwise — and chasing them is the next item, not a precondition.
 
 Two limits worth stating: the pinned tarball is the **3.27.x** branch
 (`linux-imx-rel-5.7-wd-3.27.2.1-f21cbcc9ed9a`, base 6.12.49), so on a newer OS
