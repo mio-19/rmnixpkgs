@@ -231,6 +231,16 @@ stdenv.mkDerivation (finalAttrs: {
         exit 1
       fi
 
+      # A vendor-context fixup patch can be applied on top of the chain when the
+      # tree needs one: it is the smallest patch that makes a vendored variant of
+      # an upstream patch apply. When present it is applied here and shipped as
+      # the audited vendor-fixup; when absent the chain is applied to the tree as
+      # upstream wrote it (the current build carries no such fixup).
+      ${lib.optionalString (builtins.pathExists ./kernel-vendor-fcontext-fixup.patch) ''
+        patch -p1 < ${./kernel-vendor-fcontext-fixup.patch}
+        printf 'vendor-context-fixup %s\n' 'kernel-vendor-fcontext-fixup.patch' >> "$TMPDIR/stable/report"
+      '}
+
       # The one rejected hunk that is not merely a missing driver fix: without
       # it io.h calls __ioremap_prot() undeclared and nothing compiles. Must
       # apply, so a failure here is a build failure, not a report line.
@@ -351,6 +361,9 @@ stdenv.mkDerivation (finalAttrs: {
       # The exact subset of the 6.12.114 patch that the build reversed, derived
       # from it at build time; the source level is named in the report.
       install -Dm644 "$TMPDIR/stable/114-syscore.patch" $out/share/rmpp-kernel/syscore-revert.patch
+      ${lib.optionalString (builtins.pathExists ./kernel-vendor-fcontext-fixup.patch) ''
+        install -Dm644 ${./kernel-vendor-fcontext-fixup.patch} $out/share/rmpp-kernel/vendor-fcontext-fixup.patch
+      '}
     ''}
 
     runHook postInstall

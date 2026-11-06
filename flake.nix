@@ -30,6 +30,11 @@
     # are used; the build tooling it ships is replaced by nixpkgs packages.
     android-on-remarkable-paper-pro.url = "github:MaximeRivest/android-on-remarkable-paper-pro";
     android-on-remarkable-paper-pro.flake = false;
+    # The kernel also reads a vendor-context fixup patch (optional) from the
+    # flake root; when present it is the smallest patch that makes a vendored
+    # variant of an upstream level apply, shipped under share/ in the kernel
+    # output. When absent the chain is applied to the tree as upstream wrote it.
+    # Keep this file absent unless a real chain apply has earned a reason.
   };
 
   outputs =
