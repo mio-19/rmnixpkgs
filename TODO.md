@@ -39,7 +39,10 @@ the only one that renders), `.#rmpp_android` / `.#rmpp_android_files`,
       `updatedb.service`) with `systemctl mask`'s /dev/null symlink; and after
       `vellum add` verifies the declared packages against vellum's apk database
       (`/home/root/.vellum/lib/apk/db/installed`, `P:<name>` lines), reporting
-      anything missing. None of this is device-tested yet.
+      anything missing. The check logic was exercised off-device against fake
+      `/etc/version`, `uname -r` and apk database; it has not run on the tablet
+      yet, and `update-engine.service` / `updatedb.service` are still only
+      assumed to be this OS's updater unit names.
 - [x] `os.nix`: one declaration of the target reMarkable OS release — 3.28,
       glibc 2.39, xochitl's Qt 6.10.3, kernel 6.12.49 from branch
       `rmpp_6.12.49_v3.27.x`. `kernel.nix` builds from it, `system.nix` records it

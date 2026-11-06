@@ -42,6 +42,9 @@ VELLUM_STATE=$STATE/vellum-managed
 # vellum's apk database: the truth about what is installed (vellum layout, see
 # TODO.md — /home/root/.vellum/lib/apk/db holds apk's `installed` file).
 VELLUM_DB=${VELLUM_DB:-/home/root/.vellum/lib/apk/db/installed}
+# Where the OS reports its own release. Overridable so the check can be exercised
+# off-device (see the checks in remarkable-paper-pro.md).
+OS_VERSION_FILE=${OS_VERSION_FILE:-/etc/version}
 MARKER=.rmpp-config
 BOOT_UNIT=rmpp-config.service
 
@@ -102,10 +105,10 @@ check_os() {
 
 	want_os=$(sed -n 's/^version=//p' "$gen/os")
 	want_kernel=$(sed -n 's/^kernel-version=//p' "$gen/os")
-	have_os=$(head -n1 /etc/version 2>/dev/null | tr -d ' \t\r\n' || true)
+	have_os=$(head -n1 "$OS_VERSION_FILE" 2>/dev/null | tr -d ' \t\r\n' || true)
 
 	if [ -z "$have_os" ]; then
-		warn "cannot read the installed reMarkable OS version from /etc/version"
+		warn "cannot read the installed reMarkable OS version from $OS_VERSION_FILE"
 		warn "this generation was built for $want_os; expect kernel/ABI mismatches"
 	elif [ "$(os_short "$have_os")" = "$(os_short "$want_os")" ]; then
 		log "reMarkable OS $have_os matches the generation ($want_os)"
@@ -114,11 +117,17 @@ check_os() {
 		warn "edit os.nix (version, kernel source pin, glibc, Qt) and rebuild; a program linked against the system may fail to load"
 	fi
 
+	# rmpp_kernel sets CONFIG_LOCALVERSION="-waydroid", so its release is
+	# <version>-waydroid while the stock one is bare <version>. Comparing the
+	# bare version alone cannot tell them apart.
 	have_kernel=$(uname -r)
 	case "$have_kernel" in
-	"$want_kernel"*) ;;
+	"$want_kernel-waydroid") log "kernel $have_kernel (rmpp_kernel)" ;;
+	"$want_kernel")
+		warn "device runs the stock kernel $have_kernel, not $want_kernel-waydroid (rmpp_kernel is not installed, or an OTA replaced it)"
+		;;
 	*)
-		warn "device runs kernel $have_kernel, generation expects $want_kernel (stock kernel: rmpp_kernel is not installed, or an OTA replaced it)"
+		warn "device runs kernel $have_kernel, generation expects $want_kernel-waydroid"
 		;;
 	esac
 }
