@@ -264,7 +264,7 @@ generation records and what activation compares `uname -r` against.
 
 ```nix
 # config.nix
-kernel.securityPatches.enable = true; # default; false = the vendor tree as published
+kernel.securityPatches.enable = false; # default until the rest of the stack is settled and there is a verified kernel line on device; true = 6.12.115-waydroid
 ```
 
 The chain goes in with GNU `patch` (`--forward`, so a fix the vendor tree
