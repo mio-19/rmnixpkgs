@@ -56,7 +56,7 @@
     # security fix.
     #
     # `rmpp.kernel.securityPatches.enable` (config.nix) is the switch. With it
-    # on, the built kernel is <version>-with-<last>, e.g. 6.12.115-waydroid, and
+    # on, the built kernel is 6.12.<last>-waydroid (6.12.115-waydroid today) and
     # activation looks for exactly that. Bumping: set `last` to the current
     # 6.12.y, add the new hashes (`nix store prefetch-file <url>` prints the
     # SRI), rebuild.

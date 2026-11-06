@@ -248,13 +248,6 @@ plain hash check in developer mode, and reMarkable's boot watchdog flips the
 active slot after repeated failed boots. Still let `install-kernel.sh` take the
 backup, and still read upstream's README first.
 
-Two limits worth stating: the pinned tarball is the **3.27.x** branch
-(`linux-imx-rel-5.7-wd-3.27.2.1-f21cbcc9ed9a`, base 6.12.49), so on a newer OS
-point `kernel.nix` at the matching branch tarball from
-[reMarkable/linux-imx-rm](https://github.com/reMarkable/linux-imx-rm); and every
-reMarkable OS update replaces the rootfs slot, so the kernel has to be
-reinstalled afterwards.
-
 ##### Kernel security updates
 
 reMarkable's kernel is frozen at one stable level (6.12.49) and does not move
@@ -285,6 +278,13 @@ silently: the build prints the summary, and the output carries
 `share/rmpp-kernel/security-patch-rejects` (every hunk that did not apply).
 Whether those partial applications still compile is **not** known yet — the
 kernel build has not been run here; see `TODO.md`.
+
+Two limits worth stating: the pinned tarball is the **3.27.x** branch
+(`linux-imx-rel-5.7-wd-3.27.2.1-f21cbcc9ed9a`, base 6.12.49), so on a newer OS
+point `kernel.nix` at the matching branch tarball from
+[reMarkable/linux-imx-rm](https://github.com/reMarkable/linux-imx-rm); and every
+reMarkable OS update replaces the rootfs slot, so the kernel has to be
+reinstalled afterwards.
 
 Syncthing is useful headless: run it under `/home/root` and point the web UI at
 the device over USB or Wi-Fi.

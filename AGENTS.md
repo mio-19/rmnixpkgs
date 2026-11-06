@@ -12,7 +12,7 @@ are no per-component subdirectories:
 | `os.nix` | the target reMarkable OS release: kernel source pin + stable patch chain, glibc/Qt ABI |
 | `aarch64-pkgs.nix` | the native aarch64-linux package set (cache.nixos.org trick) |
 | `wpewebkit.nix`, `rmweb.nix` | browser engine and browser app, both from source |
-| `kernel.nix` | reMarkable's kernel + Waydroid needs + etnaviv GPU driver |
+| `kernel.nix` | reMarkable's kernel + Waydroid needs + etnaviv GPU driver + the upstream stable (security) chain |
 | `system.nix`, `config.nix`, `activate.sh` | declarative configuration: the module, this device's config, the activation script |
 | `nix-setup.sh` | device-side persistent-store setup script |
 | `remarkable-paper-pro.md`, `TODO.md` | device notes; verified facts and open work |
