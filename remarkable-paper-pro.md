@@ -345,6 +345,46 @@ Two deliberate differences from `brew bundle`:
 The apk database stays vellum's: the generation records *intent*, and
 `vellum list` / `vellum del` remain the truth for what is actually installed.
 
+### OS version
+
+Programs that link against the device's own userland — the prebuilt rmweb bundle
+loading xochitl's Qt, anything expecting the system glibc — are tied to the
+installed reMarkable OS release, and reMarkable publishes one kernel source
+branch per release. So the release is declared once, in `os.nix`:
+
+```nix
+{
+  version = "3.28";        # reMarkable OS release
+  glibc = "2.39";          # userland ABI of that release
+  qt = "6.10.3";           # what xochitl ships
+  kernel = {
+    version = "6.12.49";
+    branch = "rmpp_6.12.49_v3.27.x";   # reMarkable's branch for it
+    file = "linux-imx-rel-5.7-wd-3.27.2.1-f21cbcc9ed9a.tar.gz";
+    hash = "sha256-…";                 # unpacked tree
+    tarballSha256 = "ad8ab17a…";       # the tarball, to re-check a download
+  };
+}
+```
+
+Three consumers, and no second copy of the numbers:
+
+- `kernel.nix` takes `os` and builds the kernel from `os.kernel`, so the source
+  pin *is* the declared OS version instead of a branch name to remember
+  separately.
+- `system.nix` exposes `rmpp.os.{version,glibc,qt,kernelVersion}` (read-only) and
+  writes them into the generation as `$out/os`; `activate.sh` logs the version as
+  it applies, and `cat /home/root/.rmpp/current/os` answers "what was this built
+  for?".
+- The prebuilt bundle is the practical case: it loads the *device's* Qt and
+  glibc, not Nix's, which is exactly why those numbers are written down.
+
+Bumping it means editing `os.nix` alone: new `version`, the matching `kernel` pin
+from [reMarkable/linux-imx-rm](https://github.com/reMarkable/linux-imx-rm)
+(hash of the unpacked tree), and `glibc`/`qt` from the release notes. Then
+rebuild `rmpp_kernel` and `rmpp_config` — and expect the prebuilt rmweb bundle to
+need an upstream release built for the new OS.
+
 ## Nix on the tablet
 
 `rmpp_nix_setup` does the whole dance, because Nix hardcodes `/nix` and `/` is

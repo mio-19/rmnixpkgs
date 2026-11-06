@@ -1,10 +1,13 @@
 # Everything this flake ships for the reMarkable Paper Pro (ferrari, aarch64).
 #
 # The tree is flat on purpose — every file here is about the Paper Pro:
+#   os.nix            the target reMarkable OS release: ABI + kernel source pin
 #   aarch64-pkgs.nix  native aarch64-linux package set (the cache.nixos.org trick)
 #   wpewebkit.nix     WPE WebKit 2.48.5, the browser engine
 #   rmweb.nix         the rmweb browser app, built from source
 #   kernel.nix        reMarkable's kernel + Waydroid needs + etnaviv GPU driver
+#   system.nix/config.nix/activate.sh
+#                     declarative configuration: module, device config, activation
 #   nix-setup.sh      device-side persistent-store setup script
 { inputs }:
 {
@@ -13,6 +16,11 @@
     let
       rmppPkgs = import ./aarch64-pkgs.nix pkgs;
       upstream = inputs.android-on-remarkable-paper-pro;
+
+      # The OS release this all targets, declared once (os.nix) and handed to
+      # everything that has to agree with the installed system: the kernel
+      # source pin, and the generation's record of what it was built for.
+      os = import ./os.nix;
 
       # Command line tools that are useful on the tablet itself. Syncthing is
       # the well-trodden way to get files on and off a Paper Pro (headless
@@ -35,7 +43,7 @@
           ./config.nix
         ];
         specialArgs = {
-          inherit lib;
+          inherit lib os;
           pkgs = rmppPkgs;
         };
       };
@@ -218,6 +226,7 @@
         # aarch64 CPU, hours on many cores, ~30 GB of tree.
         # nix build .#rmpp_kernel -o rmpp-kernel
         rmpp_kernel = rmppPkgs.callPackage ./kernel.nix {
+          inherit os;
           configFragment = "${upstream}/kernel/waydroid.cfg";
           gpuDeviceTreePatch = "${upstream}/kernel/gpu-etnaviv-dt.patch";
         };

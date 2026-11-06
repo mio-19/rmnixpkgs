@@ -10,6 +10,7 @@
   openssl,
   perl,
   ubootTools,
+  os,
   configFragment,
   gpuDeviceTreePatch,
 }:
@@ -24,7 +25,9 @@
 # `kernel/gpu-etnaviv-dt.patch`, the last two passed in verbatim from the pinned
 # flake input). Their script needs the binary Yocto SDK and cross-compiles; this
 # is the same source and the same configure steps, built natively for
-# aarch64-linux by nixpkgs' own gcc.
+# aarch64-linux by nixpkgs' own gcc. The source pin is not in this file: it
+# comes from `os` (os.nix), because reMarkable tracks one source branch per OS
+# release and the OS version is declared in exactly one place.
 #
 # WHY THE GPU MATTERS: stock reMarkable OS ships no GPU driver at all — no
 # render node, no etnaviv module, no EGL/GLES/GBM — which is why
@@ -36,20 +39,24 @@
 # render node to talk to.
 stdenv.mkDerivation (finalAttrs: {
   pname = "rmpp-kernel";
-  version = "6.12.49";
+  version = os.kernel.version;
 
-  # reMarkable's published GPL source, tracked with git LFS. The tarball itself
-  # is sha256 ad8ab17a897bb35ecec877f6b3e7e766a534ce25e46766991f7ec92b276e583f
-  # (259,818,958 bytes) per
-  # https://github.com/skdlzlvk/paper-pro-move-dualboot-installer/blob/main/docs/KERNEL-SOURCE.md ;
-  # the hash below is the unpacked tree, which is what fetchzip pins.
+  # reMarkable's published GPL source, tracked with git LFS. The pin (branch,
+  # file, hashes) lives in os.nix:
   #
-  # Version lock: this is the rmpp_6.12.49_v3.27.x branch. On a newer reMarkable
-  # OS, point it at the matching branch tarball from
-  # https://github.com/reMarkable/linux-imx-rm and rebuild.
+  #   url   https://media.githubusercontent.com/media/reMarkable/linux-imx-rm/<branch>/<file>
+  #   hash  the unpacked tree, which is what fetchzip pins
+  #
+  # os.kernel.tarballSha256 is the tarball itself, for cross-checking a
+  # re-download against
+  # https://github.com/skdlzlvk/paper-pro-move-dualboot-installer/blob/main/docs/KERNEL-SOURCE.md .
+  #
+  # Version lock: this is the rmpp_6.12.49_v3.27.x branch, the source for OS
+  # 3.28. On a newer reMarkable OS, point os.nix at the matching branch tarball
+  # from https://github.com/reMarkable/linux-imx-rm and rebuild.
   src = fetchzip {
-    url = "https://media.githubusercontent.com/media/reMarkable/linux-imx-rm/rmpp_6.12.49_v3.27.x/linux-imx-rel-5.7-wd-3.27.2.1-f21cbcc9ed9a.tar.gz";
-    hash = "sha256-2OFtlMGX44zyuOvj9OeC1JsAFFOX7BMubFuGs2f0TKU=";
+    url = "https://media.githubusercontent.com/media/reMarkable/linux-imx-rm/${os.kernel.branch}/${os.kernel.file}";
+    hash = os.kernel.hash;
   };
 
   # Unpacked by fetchzip already; the build copies it because the store is
@@ -143,8 +150,9 @@ stdenv.mkDerivation (finalAttrs: {
       rebuilt with the Android/Waydroid configuration fragment and the Vivante
       GPU device-tree patch from android-on-remarkable-paper-pro. The stock OS
       exposes no GPU; this kernel gives Mesa's etnaviv driver a render node.
-      Reinstall after every reMarkable OS update, and back up the stock
-      fitImage first.
+      Source pin and version come from os.nix, so the kernel always matches the
+      declared OS release. Reinstall after every reMarkable OS update, and back
+      up the stock fitImage first.
     '';
     homepage = "https://github.com/reMarkable/linux-imx-rm";
     license = lib.licenses.gpl2Only;

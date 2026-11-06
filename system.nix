@@ -17,6 +17,7 @@
   lib,
   pkgs,
   config,
+  os,
   ...
 }:
 let
@@ -266,6 +267,37 @@ in
       default = { };
       description = "Declarative vellum (apk) package list, Homebrew-module style.";
     };
+
+    # What this generation was built for. Read-only: the release is declared
+    # once, in os.nix, because the kernel source pin and the userland ABI both
+    # derive from it — a second copy set here could disagree with the packages
+    # that were actually built.
+    os = {
+      version = lib.mkOption {
+        type = lib.types.str;
+        readOnly = true;
+        default = os.version;
+        description = "reMarkable OS release this configuration targets (os.nix).";
+      };
+      glibc = lib.mkOption {
+        type = lib.types.str;
+        readOnly = true;
+        default = os.glibc;
+        description = "Userland glibc of that release (os.nix): what links against the system must match it.";
+      };
+      qt = lib.mkOption {
+        type = lib.types.str;
+        readOnly = true;
+        default = os.qt;
+        description = "Qt that xochitl ships on that release (os.nix).";
+      };
+      kernelVersion = lib.mkOption {
+        type = lib.types.str;
+        readOnly = true;
+        default = os.kernel.version;
+        description = "Kernel version that release ships, i.e. what rmpp_kernel builds.";
+      };
+    };
   };
 
   options.assertions = lib.mkOption {
@@ -367,6 +399,15 @@ in
 
             # Ownership manifest: the only paths activation may create or delete.
             ${writeLines "$out/manifest" ownedPaths}
+
+            # What this generation was built for, readable on the device:
+            #   cat /home/root/.rmpp/current/os
+            ${writeLines "$out/os" [
+              "version=${cfg.os.version}"
+              "glibc=${cfg.os.glibc}"
+              "qt=${cfg.os.qt}"
+              "kernel-version=${cfg.os.kernelVersion}"
+            ]}
 
             runHook postInstall
           '';

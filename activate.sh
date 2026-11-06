@@ -302,6 +302,8 @@ install_boot_unit() {
 log "applying generation $gen"
 prune_old
 apply_etc
+log "applying configuration for reMarkable OS $(sed -n 's/^version=//p' "$gen/os")"
+
 apply_units
 apply_appload
 apply_vellum

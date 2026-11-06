@@ -4,6 +4,10 @@
 # Coexistence is the constraint: everything below either lives in the store or
 # under /home/root, and nothing claims a path that vellum, XOVI or AppLoad own.
 # See remarkable-paper-pro.md for the ecosystem map.
+# The reMarkable OS release this configuration is for is declared once, in
+# os.nix: `rmpp.os.*` below is read-only and simply reports it (the kernel source
+# pin and the userland ABI both derive from that file, so a second copy here
+# could disagree with the packages that were actually built).
 {
   rmpp = {
     # PATH for the generation's bin/ (rmpp.packages), also for the OS-update-safe

@@ -32,6 +32,12 @@ the only one that renders), `.#rmpp_android` / `.#rmpp_android_files`,
 - [x] `default.nix`: `rmpp_android` (waydroid, labwc,
       wlroots, wayland-utils, mesa — all cached aarch64) + `rmpp_android_files`
       (kernel fragment, GPU DT patch, scripts, units, theme verbatim).
+- [x] `os.nix`: one declaration of the target reMarkable OS release — 3.28,
+      glibc 2.39, xochitl's Qt 6.10.3, kernel 6.12.49 from branch
+      `rmpp_6.12.49_v3.27.x`. `kernel.nix` builds from it, `system.nix` records it
+      as `$out/os` (`version=` / `glibc=` / `qt=` / `kernel-version=`) and
+      activation logs it. Nothing knows about a release newer than 3.28: the
+      next OS update starts by editing this file, then rebuilding `rmpp_kernel`.
 - [x] `system.nix` + `config.nix` + `activate.sh`: system-manager-style
       declarative configuration — generations in the store, activation that owns
       only its manifest, a boot unit that re-applies it, and unit names asserted

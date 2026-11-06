@@ -9,6 +9,7 @@ are no per-component subdirectories:
 | Path | What |
 | --- | --- |
 | `flake.nix`, `default.nix` | flake entry point, and one module defining every package |
+| `os.nix` | the target reMarkable OS release: kernel source pin, glibc/Qt ABI |
 | `aarch64-pkgs.nix` | the native aarch64-linux package set (cache.nixos.org trick) |
 | `wpewebkit.nix`, `rmweb.nix` | browser engine and browser app, both from source |
 | `kernel.nix` | reMarkable's kernel + Waydroid needs + etnaviv GPU driver |
@@ -54,6 +55,9 @@ credit `https://github.com/exp78/rmweb` and `https://wpewebkit.org/releases/`.
   delete paths it recorded in its own manifest: never `/home/root/.vellum`,
   never `xovi/extensions.d`, never a foreign AppLoad entry, and only `rmpp-*`
   systemd units.
+- Anything tied to the installed OS release — kernel source branch and hashes,
+  glibc, xochitl's Qt — lives in `os.nix` and nowhere else. A derivation takes
+  it as an argument (`{ os, ... }`) instead of hard-coding a version.
 
 ## Nix style
 
