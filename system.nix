@@ -208,7 +208,8 @@ let
     ++ lib.mapAttrsToList (
       n: v: "/etc/systemd/system/${v.wantedBy}.wants/${n}.service"
     ) cfg.systemd.services
-    ++ lib.mapAttrsToList (n: _: "/home/root/xovi/exthome/appload/${n}/") cfg.appload.apps;
+    ++ lib.mapAttrsToList (n: _: "/home/root/xovi/exthome/appload/${n}/") cfg.appload.apps
+    ++ lib.optionals cfg.osUpdates.disable (map (u: "/etc/systemd/system/${u}") cfg.osUpdates.units);
 
   safeName = n: builtins.match "[A-Za-z0-9._-]+" n != null;
 
@@ -298,6 +299,31 @@ in
         description = "Kernel version that release ships, i.e. what rmpp_kernel builds.";
       };
     };
+
+    # reMarkable OTA updates. With a rebuilt kernel and a store that lives on
+    # /home, an unattended OTA is hostile: it replaces the rootfs (the boot unit
+    # with it) and boots the stock kernel again, silently undoing this layer.
+    # Masking is `systemctl mask`'s /dev/null symlink, i.e. a file, so it can be
+    # applied without systemctl and re-created at every boot.
+    osUpdates = {
+      disable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "
+          Mask the stock reMarkable OTA updater. Take updates deliberately
+          instead: re-enable, apply, let the OTA run, then rebuild against the
+          new release and reinstall the boot unit.
+        ";
+      };
+      units = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [
+          "update-engine.service"
+          "updatedb.service"
+        ];
+        description = "Units implementing reMarkable's OTA updates; masked when `disable` is set.";
+      };
+    };
   };
 
   options.assertions = lib.mkOption {
@@ -335,6 +361,10 @@ in
       {
         assertion = lib.all (p: builtins.match "[A-Za-z0-9._+@:=<>-]+" p != null) cfg.vellum.packages;
         message = "rmpp.vellum.packages: package specs may only contain [A-Za-z0-9._+@:=<>-]";
+      }
+      {
+        assertion = lib.all (u: builtins.match "[A-Za-z0-9._@-]+\\.service" u != null) cfg.osUpdates.units;
+        message = "rmpp.osUpdates.units: expected systemd unit names like update-engine.service";
       }
     ];
 
@@ -399,6 +429,9 @@ in
 
             # Ownership manifest: the only paths activation may create or delete.
             ${writeLines "$out/manifest" ownedPaths}
+
+            # OS-update policy: units to mask, one per line.
+            ${lib.optionalString cfg.osUpdates.disable (writeLines "$out/systemd.mask" cfg.osUpdates.units)}
 
             # What this generation was built for, readable on the device:
             #   cat /home/root/.rmpp/current/os

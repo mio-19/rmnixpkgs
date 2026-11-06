@@ -385,6 +385,32 @@ from [reMarkable/linux-imx-rm](https://github.com/reMarkable/linux-imx-rm)
 rebuild `rmpp_kernel` and `rmpp_config` — and expect the prebuilt rmweb bundle to
 need an upstream release built for the new OS.
 
+### What activation checks
+
+`activate` is also where the configuration meets reality, and it reports instead
+of pretending (`set -eu`, but these never abort — a boot has to finish):
+
+- **OS version.** `/etc/version` is compared (major.minor) with the generation's
+  `$gen/os`. A mismatch warns loudly: the kernel pin, glibc and Qt ABI in
+  `os.nix` describe another release. The kernel line (`uname -r` vs the declared
+  kernel version) is checked too, so a stock kernel — an OTA replaced
+  `rmpp_kernel`, or it was never installed — is called out.
+- **reMarkable OTA updates.** `rmpp.osUpdates.disable = true` (set in
+  `config.nix`) masks the stock updater, `update-engine.service` and
+  `updatedb.service` by default, using `systemctl mask`'s `/dev/null` symlink,
+  and stops it if it is already running. This is not paranoia: an unattended OTA
+  replaces the rootfs — taking `rmpp-config.service` with it — and boots the
+  stock kernel. The masks are re-created at every boot because `/etc` is volatile.
+- **Vellum packages.** After `vellum add` for each declared package, the result
+  is verified against vellum's apk database
+  (`/home/root/.vellum/lib/apk/db/installed`), not against `vellum list` output:
+  a package that is declared but absent is reported as missing, so an offline
+  activation cannot look like success.
+
+Taking an OS update deliberately: set `rmpp.osUpdates.disable = false`, activate,
+let the OTA run, then update `os.nix` for the new release, rebuild,
+`activate --install-boot-unit`, and reinstall `rmpp_kernel`.
+
 ## Nix on the tablet
 
 `rmpp_nix_setup` does the whole dance, because Nix hardcodes `/nix` and `/` is

@@ -74,5 +74,12 @@
         cleanup = false;
       };
     };
+
+    # Mask reMarkable's OTA updater. An unattended update replaces the rootfs
+    # (rmpp-config.service included) and boots the stock kernel again, undoing
+    # both rmpp_kernel and this layer. To take an update on purpose: set
+    # `disable = false`, activate, run the OTA, then edit os.nix for the new
+    # release, rebuild, and `activate --install-boot-unit` again.
+    osUpdates.disable = true;
   };
 }

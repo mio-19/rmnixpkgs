@@ -32,6 +32,14 @@ the only one that renders), `.#rmpp_android` / `.#rmpp_android_files`,
 - [x] `default.nix`: `rmpp_android` (waydroid, labwc,
       wlroots, wayland-utils, mesa — all cached aarch64) + `rmpp_android_files`
       (kernel fragment, GPU DT patch, scripts, units, theme verbatim).
+- [x] Activation checks: compares `/etc/version` (major.minor) and `uname -r`
+      against the generation's `os` file and warns on a mismatch instead of
+      aborting the boot; masks reMarkable's OTA updater
+      (`rmpp.osUpdates.disable`, `update-engine.service` /
+      `updatedb.service`) with `systemctl mask`'s /dev/null symlink; and after
+      `vellum add` verifies the declared packages against vellum's apk database
+      (`/home/root/.vellum/lib/apk/db/installed`, `P:<name>` lines), reporting
+      anything missing. None of this is device-tested yet.
 - [x] `os.nix`: one declaration of the target reMarkable OS release — 3.28,
       glibc 2.39, xochitl's Qt 6.10.3, kernel 6.12.49 from branch
       `rmpp_6.12.49_v3.27.x`. `kernel.nix` builds from it, `system.nix` records it

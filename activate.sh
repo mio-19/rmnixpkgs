@@ -39,6 +39,9 @@ VELLUM=/home/root/.vellum/bin/vellum
 VELLUM_MOUNT_RW=/home/root/.vellum/bin/mount-rw
 VELLUM_MOUNT_RESTORE=/home/root/.vellum/bin/mount-restore
 VELLUM_STATE=$STATE/vellum-managed
+# vellum's apk database: the truth about what is installed (vellum layout, see
+# TODO.md — /home/root/.vellum/lib/apk/db holds apk's `installed` file).
+VELLUM_DB=${VELLUM_DB:-/home/root/.vellum/lib/apk/db/installed}
 MARKER=.rmpp-config
 BOOT_UNIT=rmpp-config.service
 
@@ -85,6 +88,41 @@ fi
 
 [ "$(id -u)" -eq 0 ] || die "run this as root on the tablet"
 
+# --- checks ----------------------------------------------------------------
+
+# What the device actually runs vs what this generation was built for. The
+# installed release is /etc/version, the file the OS itself (and vellum's
+# generated `remarkable-os` package) uses. A mismatch is reported, not fatal: a
+# boot must still finish, but it means the kernel pin, glibc and Qt ABI declared
+# in os.nix describe a different release than the one running.
+os_short() { printf '%s' "${1#v}" | cut -d. -f1,2; }
+
+check_os() {
+	[ -f "$gen/os" ] || return 0
+
+	want_os=$(sed -n 's/^version=//p' "$gen/os")
+	want_kernel=$(sed -n 's/^kernel-version=//p' "$gen/os")
+	have_os=$(head -n1 /etc/version 2>/dev/null | tr -d ' \t\r\n' || true)
+
+	if [ -z "$have_os" ]; then
+		warn "cannot read the installed reMarkable OS version from /etc/version"
+		warn "this generation was built for $want_os; expect kernel/ABI mismatches"
+	elif [ "$(os_short "$have_os")" = "$(os_short "$want_os")" ]; then
+		log "reMarkable OS $have_os matches the generation ($want_os)"
+	else
+		warn "reMarkable OS mismatch: device runs $have_os, generation built for $want_os"
+		warn "edit os.nix (version, kernel source pin, glibc, Qt) and rebuild; a program linked against the system may fail to load"
+	fi
+
+	have_kernel=$(uname -r)
+	case "$have_kernel" in
+	"$want_kernel"*) ;;
+	*)
+		warn "device runs kernel $have_kernel, generation expects $want_kernel (stock kernel: rmpp_kernel is not installed, or an OTA replaced it)"
+		;;
+	esac
+}
+
 # --- ownership -------------------------------------------------------------
 
 # Delete a path this configuration used to own. Anything outside the two
@@ -130,6 +168,26 @@ apply_etc() {
 		[ -f "$gen/etc/$rel" ] || continue
 		install -D -m "$file_mode" "$gen/etc/$rel" "/etc/$rel"
 	done <"$gen/etc.modes"
+}
+
+# Declarative OS-update policy (rmpp.osUpdates). `systemctl mask` is nothing but
+# a symlink to /dev/null, so it can ship as a file and be re-created at every
+# boot; only stopping an already-running updater needs systemctl.
+apply_masks() {
+	[ -s "$gen/systemd.mask" ] || return 0
+	while IFS= read -r unit; do
+		[ -n "$unit" ] || continue
+		if [ ! -e "/lib/systemd/system/$unit" ] && [ ! -e "/usr/lib/systemd/system/$unit" ]; then
+			warn "no $unit exists on this OS; nothing to mask"
+			continue
+		fi
+		ln -sf /dev/null "/etc/systemd/system/$unit"
+		if command -v systemctl >/dev/null 2>&1; then
+			systemctl is-active --quiet "$unit" && systemctl stop "$unit" || true
+		fi
+		log "masked $unit (reMarkable OS updates disabled by configuration)"
+	done <"$gen/systemd.mask"
+	command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload || true
 }
 
 apply_units() {
@@ -233,6 +291,30 @@ apply_vellum() {
 		done <"$VELLUM_STATE"
 	fi
 
+	# Verify what the list claims instead of trusting `vellum add`: it is
+	# best-effort above (an offline boot fails it), so an activation that only
+	# installed 2 of 5 packages must not look like success.
+	if [ -s "$gen/vellum.packages" ]; then
+		if [ -r "$VELLUM_DB" ]; then
+			missing=0
+			while IFS= read -r pkg; do
+				[ -n "$pkg" ] || continue
+				name=$(printf '%s' "$pkg" | sed 's/[@=<>~].*//')
+				if grep -qx "P:$name" "$VELLUM_DB"; then
+					log "vellum: $name installed"
+				else
+					warn "vellum: $pkg is declared but not installed (no $name in the apk database)"
+					missing=$((missing + 1))
+				fi
+			done <"$gen/vellum.packages"
+			if [ "$missing" -gt 0 ]; then
+				warn "vellum: $missing declared package(s) missing; run 'vellum add <pkg>' once the device is online"
+			fi
+		else
+			warn "vellum: cannot verify the declared packages (no apk database at $VELLUM_DB)"
+		fi
+	fi
+
 	# Intentional word splitting: $managed is a space-separated list.
 	# shellcheck disable=SC2086
 	printf '%s\n' $managed >"$VELLUM_STATE"
@@ -300,10 +382,10 @@ install_boot_unit() {
 # --- main -----------------------------------------------------------------
 
 log "applying generation $gen"
+check_os
 prune_old
 apply_etc
-log "applying configuration for reMarkable OS $(sed -n 's/^version=//p' "$gen/os")"
-
+apply_masks
 apply_units
 apply_appload
 apply_vellum
