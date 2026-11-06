@@ -8,6 +8,8 @@
   qt6,
   wpewebkit,
   glib-networking,
+  libsoup_3,
+  libwpe,
   makeWrapper,
 }:
 
@@ -40,12 +42,27 @@ stdenv.mkDerivation (finalAttrs: {
     qt6.qtdeclarative
     wpewebkit
     glib-networking
+    # Not linked against directly, but `pkg-config --libs wpe-webkit-2.0`
+    # resolves the .pc file's Requires line (libsoup-3.0) through the consumer's
+    # PKG_CONFIG_PATH, so configure fails without it: "Package 'libsoup-3.0',
+    # required by 'wpe-webkit-2.0', not found". Adding it to ./wpewebkit.nix's
+    # propagatedBuildInputs would be tidier for every consumer but rebuilds the
+    # whole engine, so it is listed here. Same for wpe-1.0 (libwpe), the other
+    # public Requires entry that is not already in the closure by name.
+    libsoup_3
+    libwpe
   ];
 
   # The CMake project has no install rules (upstream assembles the /home/root
   # bundle with scripts/bundle.sh instead), so configure/build/install are done
   # explicitly here and the tree is laid out to match upstream's bundle.
   dontConfigure = true;
+
+  # qtPreHook refuses a qtbase-dependent derivation without a wrapping decision.
+  # The wrapper below is the decision: it sets exactly the WebKit/e-ink env the
+  # tablet needs, so Qt's hook must not wrap the wrapper again (it would prepend
+  # its own QT_PLUGIN_PATH/QML paths and drop the --set-default knobs).
+  dontWrapQtApps = true;
 
   buildPhase = ''
     runHook preBuild
@@ -119,6 +136,9 @@ stdenv.mkDerivation (finalAttrs: {
         # Entry point. RMWEB_ROOT keeps upstream's /home/root/rmweb default: the
         # launcher writes its log and its lock next to the app, and the store is
         # read-only, so the device tree is a copy (see remarkable-paper-pro.md).
+        # $out/bin is not created by anything above: everything else is installed
+        # into libexec/ or share/rmweb.
+        install -d $out/bin
         ln -s $R/rmweb $out/bin/rmweb
 
         runHook postInstall

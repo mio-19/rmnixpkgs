@@ -6,11 +6,12 @@ with nixpkgs' own bootstrap toolchain (`gcc`, `cmake`, `ninja`, `qt6`, `mesa`),
 for `aarch64-linux`, so everything is a normal Nix derivation — and package the
 Android/Waydroid stack from `android-on-remarkable-paper-pro` the same way.
 
-State at time of writing: `flake.nix` + `flake.lock` (nixpkgs pinned from the
-nixpkgs-unstable channel tarball), `.#rmpp_tools` / `.#rmpp_nix_setup` build,
-`.#rmpp_rmweb` (source build), `.#rmpp_rmweb_prebuilt` (upstream bundle, still
-the only one that renders), `.#rmpp_android` / `.#rmpp_android_files`,
-`.#rmpp_kernel` all evaluate.
+State: every package evaluates natively on aarch64, and all eight build on
+real aarch64 hardware (OrbStack `nixos` VM) — `.#rmpp_tools`,
+`.#rmpp_nix_setup`, `.#rmpp_config`, `.#rmpp_android`, `.#rmpp_android_files`,
+`.#rmpp_rmweb_prebuilt`, `.#rmpp_rmweb` (engine and app from source) and
+`.#rmpp_kernel`. Nothing has run on the tablet yet, and `rmpp_rmweb` has never
+rendered a frame (the display path below is still open).
 
 ## Done
 
@@ -62,16 +63,75 @@ the only one that renders), `.#rmpp_android` / `.#rmpp_android_files`,
       (66 incremental patches, 6.12.49 → 6.12.115, one SRI hash each) and
       `kernel.nix` applies it before the GPU patch,
       `--forward --fuzz=2`, best effort because the vendor tree has drifted.
-      `rmpp.kernel.securityPatches.enable` (config.nix, default **on**) is the
-      switch; `default.nix` records 6.12.115 as the kernel release when it is
-      on, and activation compares `uname -r` against 6.12.115-waydroid. The
-      build prints what applied and ships the rejects. Not compiled yet.
+      `rmpp.kernel.securityPatches.enable` (config.nix) is the switch;
+      `default.nix` records 6.12.115 as the kernel release when it is on, and
+      activation compares `uname -r` against 6.12.115-waydroid. The build
+      prints what applied and ships the rejects.
+      **Compiled on aarch64: the chain does not produce a working tree on this
+      vendor base**, so the switch now defaults to **off** and the flake builds
+      the published vendor kernel (6.12.49-waydroid). Details and the three
+      generated backports are below.
 - [x] `nixfmt` clean; every package evaluates (`nix eval .#…drvPath`);
       `.#rmpp_tools` verified to substitute from cache.nixos.org (aarch64 ELF).
 - [x] Docs: `remarkable-paper-pro.md` covers the flake, the source build and the
       Android adaptation.
 
 ## Verified facts (don't re-research)
+
+### Builds on aarch64 (verified)
+
+Everything below ran natively in an OrbStack `nixos` VM (NixOS 26.11,
+aarch64-linux, 9 cores, 15 GB) against a copy of this tree — the VM user cannot
+read the macOS checkout over virtiofs, and the flake's `nixConfig` is not
+honoured without `--accept-flake-config`:
+
+```sh
+tar --exclude=.git -cf /tmp/rmnixpkgs.tar . | orb -m nixos bash -lc \
+  'rm -rf ~/rmnixpkgs && mkdir -p ~/rmnixpkgs && tar -xf - -C ~/rmnixpkgs'
+orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command flakes";
+  cd ~/rmnixpkgs && nix build --accept-flake-config -L --cores 6 .#rmpp_kernel'
+```
+
+`/etc/nix` is read-only there, so flakes/extra-platforms are set per command.
+
+- `wpewebkit` 2.48.5: **compiles and installs** (hours at `--cores 6`; needs
+  the RAM). Two source-build blockers, both fixed in `wpewebkit.nix`: WebKit's
+  `FindHarfBuzz` requires the ICU component (`harfbuzz.override { withIcu =
+  true; }` — nixpkgs' plain `harfbuzz` has no `harfbuzz-icu.pc`), and CMake
+  ≥ 4.4 rejects the malformed `if()` that `Source/cmake/WebKitMacros.cmake`
+  generates for a framework not yet linked anywhere (upstream fix applied with
+  `substituteInPlace`, URLs in the file).
+- `rmweb` 0.9.7: **links against that engine**. `wpe-webkit-2.0.pc` declares
+  `Requires: glib-2.0 libsoup-3.0 wpe-1.0 wpe-platform-2.0`, and pkg-config
+  resolves a `.pc` file's Requires through the *consumer's* `PKG_CONFIG_PATH`,
+  so the app needs `libsoup_3` and `libwpe` in `buildInputs` (moving them to
+  `wpewebkit.nix`'s `propagatedBuildInputs` would be tidier for every consumer
+  but rebuilds the engine). Two install-side requirements: `dontWrapQtApps =
+  true`, because `rmweb.nix` builds its own wrapper and Qt's hook would wrap it
+  again, and `install -d $out/bin` before the `rmweb` symlink (everything else
+  goes to `libexec/`/`share/rmweb`). Verified: AArch64 ELF PIE, `ldd` reports
+  no unresolved sonames, RUNPATH is `$ORIGIN/../lib` plus the Qt/WPE/glib/
+  libsoup/libwpe/glibc/gcc-lib store dirs, and the wrapper carries
+  `WEBKIT_INJECTED_BUNDLE_PATH`, `GALLIUM_DRIVER`, `QT_QPA_PLATFORM`.
+- `rmpp_kernel` 6.12.49-waydroid (chain off): **builds**, in about 4 minutes at
+  `--cores 6` once the toolchain is warm. Verified output: `fitImage` 15 MB
+  (FIT built by `mkimage -f ferrari.its`; the build log lists `kernel-1` and
+  the `conf-freescale_ferrari-rev-*` configs), `Image` 15 MB, 605 dtbs in
+  `dtbs/` including `ferrari-rev-c` … `ferrari-rev-f`, the patched
+  `ferrari-rev-f.dtb` reading `gpu@38000000 { compatible = "vivante,gc"; }`,
+  `lib/modules/6.12.49-waydroid` plus `modules-6.12.49-waydroid.tar.gz`
+  (3.6 MB), and `share/rmpp-kernel/config` with `CONFIG_DRM_ETNAVIV=m`,
+  `CONFIG_DRM_SCHED=m`, `CONFIG_LOCALVERSION="-waydroid"`. With the chain off
+  there is deliberately no `share/rmpp-kernel/security-*` file: absence means
+  "no fixes applied", not "all applied".
+- Four build-system traps fixed while getting there: `dtc` must be in
+  `nativeBuildInputs` (`mkimage -f ferrari.its` shells out to it; the in-tree
+  `scripts/dtc` is not on PATH); `installPhase` must use
+  `cd "$NIX_BUILD_TOP"/kernel`, because phases inherit the build tree's cwd and
+  Linux sources have their own `kernel/` subdirectory; GNU findutils 4.11
+  rejects `-exec cp {} $out/dtbs/ +` ("missing argument to `-exec'", so `cp -t`
+  is used); and `modules_install`'s absolute `build`/`source` symlinks have to
+  go before the tarball is cut (they dangle and `fixupPhase` refuses them).
 
 ### Device
 - Paper Pro "ferrari": i.MX8MM, 4x Cortex-A53, OS 3.28 (Yocto scarthgap),
@@ -185,6 +245,25 @@ the only one that renders), `.#rmpp_android` / `.#rmpp_android_files`,
   flips slots after repeated late-UI reboots (dualboot installer notes).
   `install-kernel.sh` backs the stock fitImage up to
   `/home/root/waydroid/backup` and renames the new one into place atomically.
+- Stable chain on this tree, compiled: **25 clean / 41 partial / 100 rejected
+  hunks** (the measurement above), and the rejects are not all driver drift.
+  Three are core breakage and are vendored as patches here, each with its
+  upstream incr-patch URL in the header and no formatting-only change:
+  `kernel-ioremap-prot.patch` (arm64 `ioremap_prot`; without it `io.h` calls
+  `__ioremap_prot()` undeclared), `kernel-syscore-revert.patch` (6.12.114's
+  syscore rework reversed as a unit — a refactor, not a security fix — because
+  it converts the header but not reMarkable's NXP callers), and
+  `kernel-gpio-mxc-both-edges.patch` (`struct mxc_gpio_port.both_edges` widened
+  to `unsigned long`, one line; GCC 16 rejects the `u32` pointer).
+- Past those three, a `make -k` sweep shows the chain expects driver
+  conversions the vendor tree cannot take: `3rdparty/nxp-iw61x-driver/…
+  moal_sta_cfg80211.c` (cfg80211 API), `sec_mipi_dsim-imx.c`,
+  `lcdif-common.c`, `pmdomain/imx/gpcv2.c`
+  (`IMX8MM_GPUMIX_HSK_PWRDNREQN/ACKN`), `imx8m-blk-ctrl.c` /
+  `imx8mp-blk-ctrl.c` member renames, and `gpio-mxc.c:598` (`is_imx8qm`).
+  Finishing the chain is a port of those drivers, not a patch — hence
+  `rmpp.kernel.securityPatches.enable = false`. The three backports stay in
+  `kernel.nix` for the chain-on path.
 
 ### Ecosystem on the device (what a config layer must not break)
 - **vellum** (`https://github.com/vellum-dev/vellum`, apk-based) keeps
@@ -242,22 +321,23 @@ option 1.
 ## Remaining tasks
 
 - [ ] Decide the display path above.
-- [ ] Build `.#rmpp_rmweb` on aarch64 hardware (or accept an emulated build) and
-      check the closure: `readelf -d` sonames/RUNPATH, injected-bundle path,
-      `libexec/wpe-webkit-2.0` helpers, `libwpe`/`libsoup`/`glib-networking`.
+- [x] Build `.#rmpp_rmweb` on aarch64 hardware and check the closure:
+      sonames (none unresolved), RUNPATH (store paths + `$ORIGIN/../lib`),
+      wrapper env. See "Builds on aarch64 (verified)".
 - [ ] Test on device: `nix copy` the closure, copy the tree to
       `/home/root/rmweb`, `install.sh`, page turns, downloads, AppLoad icon.
 - [ ] Test `rmpp_android` on device: `labwc` start, Waydroid bring-up, GPU
       (mesa's etnaviv drivers are linked into `$env/lib/dri`).
-- [ ] Build `.#rmpp_kernel` on aarch64 hardware and check the output: fitImage
-      packs Image+dtbs, `CONFIG_DRM_ETNAVIV=m` present in
-      `share/rmpp-kernel/config`, a `6.12.115-waydroid` module tree, patched
-      `imx8mm-ferrari.dtb` in `dtbs/` — and whether the stable chain compiles:
-      `share/rmpp-kernel/security-patches` should read 25 applied / 41 partial,
-      `security-patch-rejects` the 100 hunks that found no context. If one of
-      those rejects breaks the build, backport that file by hand (vendored, not
-      reformatted) or set `rmpp.kernel.securityPatches.enable = false` and
-      record why here.
+- [x] Build `.#rmpp_kernel` on aarch64 hardware and check the output: fitImage
+      (15 MB, Image + dtbs), `CONFIG_DRM_ETNAVIV=m`, a `6.12.49-waydroid`
+      module tree, patched ferrari dtb — done, and the stable chain was tried:
+      it does not compile here, so it is off. See the chain notes above.
+- [ ] Finish the stable-chain port if kernel security fixes matter more than
+      the vendor base: convert the NXP drivers the chain leaves behind
+      (`pmdomain/imx/gpcv2.c`, `imx8m{,p}-blk-ctrl.c`, `gpio-mxc.c`,
+      `lcdif-common.c`, `sec_mipi_dsim-imx.c`, the iw61x cfg80211 glue), then
+      flip `rmpp.kernel.securityPatches.enable` back on and confirm the three
+      vendored backports still apply.
 - [ ] Flash the kernel on a device (after the backup) and verify
       `/dev/dri/renderD128` appears, `etnaviv` is in dmesg, and Mesa's etnaviv
       driver loads; then check whether rmweb can use it
@@ -282,6 +362,11 @@ option 1.
 
 ## How to resume
 
+Building natively on aarch64 still needs the VM: it is the only aarch64 Linux
+here, `nix build` on this host is emulated (and WebKit is impractical). The
+sync/run commands are in "Builds on aarch64 (verified)" above; the kernel is
+~4 minutes, WebKit hours, so run the latter detached and poll the log.
+
 ```sh
 cd repo
 git status -sb
@@ -292,6 +377,11 @@ nix eval .#packages.x86_64-linux.rmpp_rmweb.drvPath   # evals without building
 
 Notes:
 - Emulated builds are slow; run long `nix build`s in a BACKGROUND shell and
-  check logs, or build WPE once natively on an aarch64 machine.
+  check logs, or build WPE once natively on an aarch64 machine (the OrbStack
+  VM above is the one that has actually built it).
+- When a Nix phase fails, `--keep-failed` keeps the build tree (it lands under
+  `/nix/var/nix/builds/…` in the VM) — that is how the `fitImage`/`cd kernel`
+  mistakes were found; the phase cwd and the file's real location are usually
+  the answer.
 - Keep `rmpp_tools`/`rmpp_nix_setup` as they are: native `aarch64-linux` from
   cache.nixos.org (no cross compile), which is the preferred shape.

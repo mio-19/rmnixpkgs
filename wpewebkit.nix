@@ -57,6 +57,16 @@
 # many cores and needs a lot of RAM to link (see
 # remarkable-paper-pro.md). It is a normal nixpkgs derivation, so it
 # builds natively for aarch64-linux with the host's own gcc and cmake.
+let
+  # WebKit's Source/cmake/FindHarfBuzz.cmake asks for the ICU component
+  # (`harfbuzz-icu` pkg-config module + libharfbuzz-icu.so) as a REQUIRED_VAR
+  # and fails configure without it. Upstream's
+  # https://github.com/exp78/rmweb/blob/v0.9.7/engine/build-wpe.incontainer.sh
+  # builds harfbuzz with `-Dicu=enabled` for exactly this reason; nixpkgs only
+  # produces that variant when `withIcu` is set (it propagates the plain
+  # `harfbuzz` the rest of WebKit uses).
+  harfbuzzWithIcu = harfbuzz.override { withIcu = true; };
+in
 stdenv.mkDerivation (finalAttrs: {
   pname = "wpewebkit";
   version = "2.48.5";
@@ -88,7 +98,7 @@ stdenv.mkDerivation (finalAttrs: {
     fontconfig
     freetype
     glib
-    harfbuzz
+    harfbuzzWithIcu
     icu
     lcms2
     libdrm
@@ -119,6 +129,23 @@ stdenv.mkDerivation (finalAttrs: {
   # WebKit's build helpers are perl/ruby/python scripts with shebangs.
   postPatch = ''
     patchShebangs .
+
+    # CMake >= 4.4 rejects the malformed if() this release produces when a
+    # framework is not yet linked anywhere: the unquoted ''${_linked_into}
+    # collapses to nothing, so `(NOT ''${_linked_into} IN_LIST ...)` reaches
+    # CMake with an argument missing and configure dies with "if given
+    # arguments: ( NOT _linked_into ) OR ( WTF STREQUAL ) ... Unknown
+    # arguments specified".
+    #
+    # Upstream fix, taken as-is (drop the ''${} so the empty case still parses;
+    # the `(NOT _linked_into)` branch already handles it) instead of pinning an
+    # older CMake for the whole build:
+    # https://bugs.webkit.org/show_bug.cgi?id=321081
+    # https://commits.webkit.org/318630@main
+    substituteInPlace Source/cmake/WebKitMacros.cmake \
+      --replace-fail \
+        'if ((NOT _linked_into) OR (''${framework} STREQUAL ''${_linked_into}) OR (NOT ''${_linked_into} IN_LIST ''${_target}_FRAMEWORKS))' \
+        'if ((NOT _linked_into) OR (framework STREQUAL _linked_into) OR (NOT _linked_into IN_LIST ''${_target}_FRAMEWORKS))'
   '';
 
   cmakeFlags = [

@@ -5,6 +5,7 @@
   fetchzip,
   bc,
   bison,
+  dtc,
   elfutils,
   flex,
   kmod,
@@ -51,6 +52,20 @@
 let
   baseVersion = lib.versions.majorMinor os.kernel.version;
   stable = os.kernel.stable;
+
+  # The stable chain's arm64 ioremap rework applies everywhere except this one
+  # header hunk, which reMarkable's own ioremap_cache_ns() macro pushes out of
+  # range; the patch header explains it and links upstream.
+  ioHeaderBackport = ./kernel-ioremap-prot.patch;
+
+  # 6.12.114 reworked the syscore API in one sweep and could not convert
+  # reMarkable's NXP drivers, which left the tree inconsistent; this reverses
+  # that rework. The patch header has the details.
+  syscoreRevert = ./kernel-syscore-revert.patch;
+
+  # The chain converted gpio-mxc's edge bits to clear_bit()/set_bit() but could
+  # not widen the field they index; see the patch header.
+  gpioBothEdges = ./kernel-gpio-mxc-both-edges.patch;
   stableLevels = lib.range stable.first stable.last;
 
   # One fetch per incremental patch, straight from where the stable
@@ -106,12 +121,14 @@ stdenv.mkDerivation (finalAttrs: {
   nativeBuildInputs = [
     bc
     bison
+    dtc # `mkimage -f ferrari.its` shells out to dtc; scripts/dtc is not on PATH
     elfutils
     flex
     kmod # depmod
     openssl # sign-file / cert handling
     perl
     ubootTools # mkimage, for the fitImage
+    xz # the stable patches are published as .xz and unpacked with `xz -dc`
   ];
 
   # The gcc wrapper's hardening flags do not survive a kernel build.
@@ -170,7 +187,11 @@ stdenv.mkDerivation (finalAttrs: {
             printf '         rejected %s\n' "$rejected" >> "$TMPDIR/stable/report"
             printf '%s %s\n' "$patch_name" "$rejected" >> "$TMPDIR/stable/rejects"
           done
-          grep -E 'FAILED|can.t find file to patch' "$TMPDIR/stable/log" | sed 's/^/         /' >> "$TMPDIR/stable/report"
+          # `|| true` because stdenv runs the builder with `set -o pipefail`: a
+          # patch that leaves .rej files without also printing FAILED lines (it
+          # applied the rest with fuzz) makes this grep exit 1, which took the
+          # whole build down in the middle of writing the report.
+          grep -E 'FAILED|can.t find file to patch' "$TMPDIR/stable/log" | sed 's/^/         /' >> "$TMPDIR/stable/report" || true
           find . -name '*.rej' -delete
         fi
       done
@@ -192,6 +213,29 @@ stdenv.mkDerivation (finalAttrs: {
         printf 'rmpp-kernel: the pinned source and os.nix kernel.stable disagree; see os.nix\n' >&2
         exit 1
       fi
+
+      # The one rejected hunk that is not merely a missing driver fix: without
+      # it io.h calls __ioremap_prot() undeclared and nothing compiles. Must
+      # apply, so a failure here is a build failure, not a report line.
+      patch -p1 < ${ioHeaderBackport}
+      printf 'backport %s\n' 'arm64 ioremap (patch-6.12.92-93, patch-6.12.111-112)' >> "$TMPDIR/stable/report"
+
+      # 6.12.114 reworked the syscore API across the tree. reMarkable's NXP
+      # drivers (irq-gic-v3, imx-gpcv2, gpio-vf610, pinctrl-imx, scu-pd) were
+      # not converted -- their hunks found no context -- which leaves the header
+      # at the new API and those callers at the old one, and nothing compiles.
+      # Take the rework back out: it is a refactor, not a security fix. Failures
+      # here are expected (the very files it could not patch) and are not an
+      # error; --forward keeps it from applying anything twice.
+      patch -R -p1 --batch --forward < ${syscoreRevert} > "$TMPDIR/stable/syscore-revert.log" 2>&1 || true
+      printf 'reverted %s\n' 'syscore API rework (patch-6.12.113-114)' >> "$TMPDIR/stable/report"
+
+      # One line the chain half-applied: it made gpio-mxc's edge mask a bit
+      # index for clear_bit()/set_bit(), but the hunk widening both_edges from
+      # u32 to unsigned long found no context in reMarkable's struct, and GCC 16
+      # rejects the u32 pointer. Must apply.
+      patch -p1 < ${gpioBothEdges}
+      printf 'backport %s\n' 'gpio-mxc both_edges width (patch-6.12.114-115)' >> "$TMPDIR/stable/report"
     ''}
 
     # Upstream step 1: enable the Vivante GPU in the device tree.
@@ -218,14 +262,27 @@ stdenv.mkDerivation (finalAttrs: {
 
   installPhase = ''
     runHook preInstall
-    cd kernel
+
+    # buildPhase leaves the shell inside the copied tree, and `cd kernel` from
+    # there lands in the source's own kernel/ subdirectory, so name the tree
+    # absolutely instead of relying on where the previous phase stopped.
+    cd "$NIX_BUILD_TOP"/kernel
 
     install -Dm644 fitImage $out/fitImage
     install -Dm644 arch/arm64/boot/Image $out/Image
 
     # Device trees, including the patched imx8mm-ferrari one.
     mkdir -p $out/dtbs
-    find arch/arm64/boot/dts -name '*.dtb' -exec cp {} $out/dtbs/ +
+    # `-exec cp {} $out/dtbs/ +` is rejected by GNU findutils 4.11 with
+    # "missing argument to `-exec'" (the + is read as an argument, not the
+    # terminator); `cp -t` keeps the directory out of the {} position.
+    find arch/arm64/boot/dts -name '*.dtb' -exec cp -t $out/dtbs/ {} +
+
+    # modules_install links each module tree's `build`/`source` at the build
+    # directory, which is absolute and does not exist afterwards; fixupPhase
+    # rejects the dangling link, and on the tablet it would point at nothing.
+    # depmod already ran, and nothing at runtime reads them.
+    rm -f $out/lib/modules/*/build $out/lib/modules/*/source
 
     # The shape upstream's install-kernel.sh expects (it ships in
     # rmpp_android_files): fitImage plus modules-<release>.tar.gz.
@@ -242,6 +299,9 @@ stdenv.mkDerivation (finalAttrs: {
       # not (so a missing security fix is visible on the device, not implied).
       install -Dm644 "$TMPDIR/stable/report" $out/share/rmpp-kernel/security-patches
       install -Dm644 "$TMPDIR/stable/rejects" $out/share/rmpp-kernel/security-patch-rejects
+      install -Dm644 ${ioHeaderBackport} $out/share/rmpp-kernel/ioremap-prot-backport.patch
+      install -Dm644 ${syscoreRevert} $out/share/rmpp-kernel/syscore-revert.patch
+      install -Dm644 ${gpioBothEdges} $out/share/rmpp-kernel/gpio-mxc-both-edges.patch
     ''}
 
     runHook postInstall

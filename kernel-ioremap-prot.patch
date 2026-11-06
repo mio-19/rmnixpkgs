@@ -1,0 +1,64 @@
+The one hunk of the upstream stable chain (os.nix `kernel.stable`) that
+reMarkable's tree cannot take: the arm64 ioremap rework, arch/arm64/include/
+asm/io.h only.
+
+Taken from
+  https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-6.12.92-93.xz
+  https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-6.12.111-112.xz
+The rest of that rework (__ioremap_prot() in arch/arm64/mm/ioremap.c,
+arch/arm64/kernel/acpi.c) applies on its own and is not repeated here.
+
+Why the hunk is rejected: upstream's context has no `ioremap_cache_ns` line
+between ioremap_np and the trailing context, which is a reMarkable addition, so
+`patch --fuzz=2` has nothing to anchor on -- while the *next* hunk in the same
+file (ioremap_cache) does apply. Without this file arch/arm64/include/asm/io.h
+calls __ioremap_prot() without a declaration and the kernel does not compile.
+
+Difference from upstream, deliberate: reMarkable's ioremap_cache_ns() keeps its
+behaviour by going to __ioremap_prot() directly, the way upstream treats
+ioremap_wc()/ioremap_np(), instead of through the new validating ioremap_prot().
+Everything else is upstream's text; `_PAGE_IOREMAP` is kept because the vendor
+tree still defines it.
+
+Not to be reformatted: the context lines are reMarkable's tree, verbatim.
+
+--- a/arch/arm64/include/asm/io.h
++++ b/arch/arm64/include/asm/io.h
+@@ -274,17 +274,34 @@
+ typedef int (*ioremap_prot_hook_t)(phys_addr_t phys_addr, size_t size,
+ 				   pgprot_t *prot);
+ int arm64_ioremap_prot_hook_register(const ioremap_prot_hook_t hook);
++void __iomem *__ioremap_prot(phys_addr_t phys, size_t size, pgprot_t prot);
+ 
++static inline void __iomem *ioremap_prot(phys_addr_t phys, size_t size,
++					 unsigned long user_prot)
++{
++	pgprot_t prot;
++	pteval_t user_prot_val = pgprot_val(__pgprot(user_prot));
++
++	/* Reject PROT_NONE and exec-only */
++	if (!(user_prot_val & PTE_USER))
++		return NULL;
++
++	prot = __pgprot_modify(PAGE_KERNEL, PTE_ATTRINDX_MASK,
++			       user_prot_val & PTE_ATTRINDX_MASK);
++	return __ioremap_prot(phys, size, prot);
++}
+ #define ioremap_prot ioremap_prot
+ 
+ #define _PAGE_IOREMAP PROT_DEVICE_nGnRE
+ 
++#define ioremap(addr, size)	\
++	__ioremap_prot((addr), (size), __pgprot(PROT_DEVICE_nGnRE))
+ #define ioremap_wc(addr, size)	\
+-	ioremap_prot((addr), (size), PROT_NORMAL_NC)
++	__ioremap_prot((addr), (size), __pgprot(PROT_NORMAL_NC))
+ #define ioremap_np(addr, size)	\
+-	ioremap_prot((addr), (size), PROT_DEVICE_nGnRnE)
++	__ioremap_prot((addr), (size), __pgprot(PROT_DEVICE_nGnRnE))
+ #define ioremap_cache_ns(addr, size)  \
+-	ioremap_prot((addr), (size), PROT_NORMAL_NS)
++	__ioremap_prot((addr), (size), __pgprot(PROT_NORMAL_NS))
+ 
+ /*
+  * io{read,write}{16,32,64}be() macros

@@ -1,0 +1,28 @@
+Upstream stable converted gpio-mxc's edge tracking from open-coded bit
+arithmetic to clear_bit()/set_bit(), and widened the field those operate on.
+That change landed in drivers/gpio/gpio-mxc.c, but the hunk widening
+struct mxc_gpio_port.both_edges from u32 to unsigned long did not: reMarkable's
+struct has NXP additions around it, so the hunk found no context and the vendor
+tree kept the u32 field.
+
+Result with GCC 16: clear_bit()/set_bit() get a u32 pointer where a volatile
+unsigned long pointer is required, which is an error
+(-Wincompatible-pointer-types), and drivers/gpio/gpio-mxc.c does not compile.
+
+This is that missing hunk, one line, against reMarkable's struct as context: the
+field is widened, which is what upstream did. The alternative -- putting the
+open-coded bit arithmetic back -- would undo the chain's change to a file with
+the vendor additions, so the field is the smaller and more faithful fix.
+
+Source: https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-6.12.114-115.xz
+--- a/drivers/gpio/gpio-mxc.c
++++ b/drivers/gpio/gpio-mxc.c
+@@ -68,7 +68,7 @@
+ 	struct irq_domain *domain;
+ 	struct gpio_chip gc;
+ 	struct device *dev;
+-	u32 both_edges;
++	unsigned long both_edges;
+ 	struct mxc_gpio_reg_saved gpio_saved_reg;
+ 	bool power_off;
+ 	u32 wakeup_pads;

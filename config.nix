@@ -76,11 +76,20 @@
     };
 
     # Kernel security updates. reMarkable freezes its kernel at one stable level
-    # (os.nix `kernel.version`), so rmpp_kernel applies the upstream stable chain
-    # pinned in os.nix (`kernel.stable`) on top of it; that is where the kernel
-    # security fixes come from. Set to false to build the vendor tree exactly as
-    # published — expect kernel 6.12.49-waydroid instead, and no fixes after it.
-    kernel.securityPatches.enable = true;
+    # (os.nix `kernel.version`), so rmpp_kernel can apply the upstream stable
+    # chain pinned in os.nix (`kernel.stable`) on top of it.
+    #
+    # Off, because that chain does not produce a compiling tree on this vendor
+    # base: of its 100 hunks that find no context in reMarkable's NXP tree, the
+    # ones that *do* apply change core APIs (syscore, of_reset_control_array_get,
+    # cfg80211, pmdomain) while the rejected NXP drivers still call them the old
+    # way. kernel.nix backports what can be backported, but the remaining set is
+    # a port of those drivers, not a patch. Measured on aarch64, see TODO.md.
+    #
+    # Set to true to build 6.12.115-waydroid, with the report and the backports;
+    # expect the build to stop in drivers/gpio, drivers/gpu/imx, drivers/pmdomain
+    # or the 3rdparty iw61x wireless driver.
+    kernel.securityPatches.enable = false;
 
     # Mask reMarkable's OTA updater. An unattended update replaces the rootfs
     # (rmpp-config.service included) and boots the stock kernel again, undoing
