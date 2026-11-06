@@ -79,15 +79,15 @@
     # (os.nix `kernel.version`), so rmpp_kernel can apply the upstream stable
     # chain pinned in os.nix (`kernel.stable`) on top of it.
     #
-    # On: the built kernel is 6.12.115-waydroid (default.nix records that, and
-    # activation compares `uname -r` against it). The chain cannot apply cleanly
-    # to an NXP vendor tree, so kernel.nix carries the backports and the port
-    # the tree needs to compile, and ships what it could not land as
-    # share/rmpp-kernel/security-patch-*. The ported set is in TODO.md.
+    # On: the built kernel is 6.12.115-waydroid and activation compares
+    # `uname -r` against it; the tree is the build-time chain application
+    # (eight committed ports plus the derived syscore revert in the derivation,
+    # never a committed reversed artifact).
     #
-    # Off: the vendor tree exactly as reMarkable published it
-    # (6.12.49-waydroid), with no security fixes on top.
-    kernel.securityPatches.enable = true;
+    # Off: the vendor tree as reMarkable published it (6.12.49-waydroid), with
+    # no security fixes on top. Default is off until the rest of the stack is
+    # settled and there is a verified kernel line on device.
+    kernel.securityPatches.enable = false;
 
     # Mask reMarkable's OTA updater. An unattended update replaces the rootfs
     # (rmpp-config.service included) and boots the stock kernel again, undoing
