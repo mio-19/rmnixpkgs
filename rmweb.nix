@@ -14,7 +14,7 @@
 # rmweb (https://github.com/exp78/rmweb, MIT): the Qt + WPE WebKit browser for
 # the Paper Pro, built here from the v0.9.7 tag against nixpkgs' Qt and against
 # the WPE WebKit in ./wpewebkit.nix instead of upstream's prebuilt release
-# bundle. Everything is aarch64-linux (see ../../remarkable/aarch64-pkgs.nix).
+# bundle. Everything is aarch64-linux (see ./aarch64-pkgs.nix).
 stdenv.mkDerivation (finalAttrs: {
   pname = "rmweb";
   version = "0.9.7";

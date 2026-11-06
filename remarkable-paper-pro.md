@@ -44,6 +44,7 @@ the tablet's packages without extra setup:
 nix build .#rmpp_tools        # CLI tools for the tablet
 nix build .#rmpp_rmweb        # the browser, from source
 nix build .#rmpp_android      # Waydroid + labwc runtime
+nix build .#rmpp_kernel       # kernel with Android requirements + GPU driver
 nix build .#rmpp_nix_setup    # device-side Nix store setup script
 ```
 
@@ -51,7 +52,7 @@ Two things are worth knowing about how the packages are built:
 
 - **Everything is a native `aarch64-linux` derivation.** The package set is
   `import <nixpkgs> { system = "aarch64-linux"; }`
-  (`remarkable/aarch64-pkgs.nix`), not `pkgsCross`. Those are exactly the
+  (`aarch64-pkgs.nix`), not `pkgsCross`. Those are exactly the
   derivations Hydra builds and signs, so `nix build` substitutes them from
   `cache.nixos.org` instead of compiling — no cross toolchain, no reMarkable
   Yocto SDK, no binaries built against libraries the device does not have.
@@ -96,12 +97,12 @@ icon under XOVI/AppLoad.
 
 Both halves are built here:
 
-- `remarkable/rmweb/wpewebkit.nix` — **WPE WebKit 2.48.5** from the
+- `wpewebkit.nix` — **WPE WebKit 2.48.5** from the
   wpewebkit.org tarball (nixpkgs ships the GTK port and `libwpe`, not
   `wpewebkit`), configured the way upstream configures it: software rendering,
   Skia CPU painting, no GStreamer/video/WebRTC/WebGL, no bubblewrap sandbox,
   WPEPlatform **headless** only.
-- `remarkable/rmweb/package.nix` — the **rmweb app** (`engine/wpeqt`, Qt 6
+- `rmweb.nix` — the **rmweb app** (`engine/wpeqt`, Qt 6
   Gui/Qml/Quick) from the `v0.9.7` tag, against nixpkgs' Qt and that engine.
 
 This replaces upstream's prebuilt `rmweb-0.9.7.tar.gz` bundle, and it is the
@@ -187,7 +188,7 @@ across OS updates.
 
 ### Android 13 via Waydroid (adapted)
 
-`remarkable/android/default.nix` adapts
+`default.nix` adapts
 [android-on-remarkable-paper-pro](https://github.com/MaximeRivest/android-on-remarkable-paper-pro),
 which runs Android 13 (Waydroid/LineageOS 20, Play Store) on the Paper Pro: a
 headless wlroots compositor renders into the panel through their `einkbridge`
@@ -208,13 +209,51 @@ nix copy --to 'ssh://root@10.11.99.1?remote-program=/nix/var/nix/profiles/defaul
 nix build .#rmpp_android_files -o rmpp-android-files
 ```
 
-**The kernel is not packaged.** Android needs binder, PSI, BPF, loop, veth and
-friends, which only exist in a rebuilt kernel, and that artifact is
-device-version-locked and wiped by every OS update. Upstream's
-`kernel/build-kernel.sh`, `install-kernel.sh` and `test-gate.sh` stay the source
-of truth; they are installed under `share/rmpp-android/kernel`. Read their
-README before flashing anything — the A/B boot counter is what makes a bad
-kernel recoverable.
+#### Custom kernel (Android requirements + the Vivante GPU)
+
+`kernel.nix` builds reMarkable's own published kernel source with the
+changes the Android stack needs — and, more interestingly here, **the GPU driver
+the stock OS never ships**. Adapted from
+[android-on-remarkable-paper-pro/kernel](https://github.com/MaximeRivest/android-on-remarkable-paper-pro/tree/master/kernel):
+the device defconfig, the additive `waydroid.cfg` fragment (binder, binderfs,
+PSI, BPF, cgroups, loop, veth/bridge, netfilter) and `gpu-etnaviv-dt.patch`,
+both taken verbatim from the pinned flake input.
+
+The GPU half is worth spelling out, because it is the one thing a browser would
+actually feel. Stock reMarkable OS exposes no GPU to userland at all: no
+`/dev/dri/renderD128`, no etnaviv/galcore module, no EGL/GLES/GBM. That is what
+[rmweb's device profile](https://github.com/exp78/rmweb/blob/master/docs/device-profile.md)
+records ("GPU present on die, but no stock driver … all rendering is CPU"), and
+why rmweb is built for Mesa llvmpipe. The patch retargets the i.MX8MM
+`gpu@38000000` node from `fsl,imx8mm-gpu` (no driver in this tree) to
+`compatible = "vivante,gc"` and flips it to `status = "okay"`; the fragment
+then builds `CONFIG_DRM_ETNAVIV=m`. With that kernel, the 3D core is a real DRM
+device and Mesa's etnaviv driver can drive it. (The Android project's README
+calls the core a GC600, rmweb's profile calls it GC7000 UltraLite — same
+i.MX8MM 3D block; both links are above the claim.)
+
+```sh
+# aarch64 host: hours, ~30 GB. Emulated is not practical.
+nix build .#rmpp_kernel -o rmpp-kernel
+# fitImage, Image, dtbs/ and modules-<release>.tar.gz are in the output
+nix copy --to 'ssh://root@10.11.99.1?remote-program=/nix/var/nix/profiles/default/bin/nix-store' ./rmpp-kernel
+# then upstream's installer (shipped by rmpp_android_files), which backs up the
+# stock fitImage to /home/root/waydroid/backup before writing anything
+```
+
+Boot safety, per
+[paper-pro-move-dualboot-installer](https://github.com/skdlzlvk/paper-pro-move-dualboot-installer):
+the tablet has two rootfs slots, the bootloader boots `/boot/fitImage` after a
+plain hash check in developer mode, and reMarkable's boot watchdog flips the
+active slot after repeated failed boots. Still let `install-kernel.sh` take the
+backup, and still read upstream's README first.
+
+Two limits worth stating: the pinned tarball is the **3.27.x** branch
+(`linux-imx-rel-5.7-wd-3.27.2.1-f21cbcc9ed9a`, base 6.12.49), so on a newer OS
+point `kernel.nix` at the matching branch tarball from
+[reMarkable/linux-imx-rm](https://github.com/reMarkable/linux-imx-rm); and every
+reMarkable OS update replaces the rootfs slot, so the kernel has to be
+reinstalled afterwards.
 
 Syncthing is useful headless: run it under `/home/root` and point the web UI at
 the device over USB or Wi-Fi.
@@ -225,6 +264,86 @@ mkdir -p /home/root/syncthing
 /nix/store/*-rmpp-tools/bin/syncthing serve \
   --home=/home/root/syncthing --gui-address=0.0.0.0:8384
 ```
+
+## Declarative configuration (system-manager style)
+
+`system.nix` + `config.nix` describe the device the way a NixOS configuration
+does, following [system-manager](https://github.com/numtide/system-manager)'s
+model: a module declares the desired state, evaluation produces an immutable
+**generation**, and one script activates it. Declare files, services, packages
+and AppLoad entries in `config.nix`; nothing on the device is edited by hand.
+
+What is adapted, and why this is not just system-manager:
+
+- `/` is read-only and `/etc` is an overlay on tmpfs, so a generation cannot
+  "install into /etc and stay installed". Generations live in the store and
+  `rmpp-config.service` re-applies the current one at **every boot**.
+- `--install-boot-unit` is the only step that writes to the real rootfs, and it
+  reuses **vellum's** `mount-rw`/`mount-restore` helpers when they exist,
+  falling back to the same remount/collapse sequence as `nix-setup.sh`.
+- Activation records every path it created in a manifest and only ever deletes
+  from that manifest — the mechanism that lets it coexist with a device that
+  already has a package ecosystem.
+
+```sh
+nix build .#rmpp_config -o rmpp-config
+nix copy --to 'ssh://root@10.11.99.1?remote-program=/nix/var/nix/profiles/default/bin/nix-store' ./rmpp-config
+# first time, and after every reMarkable OS update (the rootfs slot is replaced):
+ssh root@10.11.99.1 /nix/store/*-rmpp-config/activate --install-boot-unit
+# later, after editing config.nix:
+ssh root@10.11.99.1 /home/root/.rmpp/current/activate
+```
+
+### Coexisting with vellum, XOVI and AppLoad
+
+That stack is the de-facto package ecosystem on reMarkable OS 3.x, and it owns
+its own paths. The rules this layer follows:
+
+| Thing | Where it lives | What `rmpp-config` does |
+| --- | --- | --- |
+| [vellum](https://github.com/vellum-dev/vellum) | everything under `/home/root/.vellum/` (apk db, repositories, keys, licences, `cache/`, `state/`) | never writes; only *reads* `bin/mount-rw`/`mount-restore` |
+| [XOVI](https://github.com/asivery/xovi) | `/home/root/xovi/`, extensions in `extensions.d/` | never touches `extensions.d` or `xovi.so` |
+| [AppLoad](https://github.com/asivery/rm-appload) | apps in `/home/root/xovi/exthome/appload/<name>/` | only entries it created (marked `.rmpp-config`); a foreign entry is reported and skipped |
+| QMD mods (`qt-resource-rebuilder`) | `/home/root/xovi/exthome/qt-resource-rebuilder/` | untouched |
+| systemd | `/etc/systemd/system/` | only `rmpp-*` unit names (asserted); `xochitl` and vellum's units untouched |
+| `/etc` | tmpfs overlay | written every boot, never persisted into the rootfs |
+| after an OTA | rootfs replaced | `activate --install-boot-unit` again, the counterpart of `vellum reenable` for package-owned files |
+
+Vellum detects the device (`rmpp` virtual package) and pins packages to the OS
+version (`remarkable-os`), so it remains the right owner for anything shipped as
+an `.apk`; this layer is for what you build from Nix — the browser, the
+Waydroid runtime, the kernel, and the units/entries that tie them in.
+
+#### Vellum packages, declared like Homebrew on nix-darwin
+
+The closest prior art for "declaratively list packages another package manager
+should own" is [nix-darwin's Homebrew module](https://github.com/nix-darwin/nix-darwin/blob/master/modules/homebrew.nix):
+a list in configuration, applied during activation, with opt-in auto-update and
+cleanup. The same shape, aimed at vellum:
+
+```nix
+rmpp.vellum = {
+  enable = true;
+  packages = [ "koreader" "appload" ];   # `name`, `name@testing`, apk constraints
+  onActivation = {
+    autoUpdate = false;   # vellum update first; off, because activation runs at boot
+    cleanup = false;      # remove packages this layer added that are no longer listed
+  };
+};
+```
+
+Two deliberate differences from `brew bundle`:
+
+- **cleanup is narrow.** It only removes packages *this layer* added, tracked in
+  `/home/root/.rmpp/vellum-managed` — never something vellum installed, an
+  `.apk` you added by hand, or another package's dependency. A typo in
+  `config.nix` therefore cannot uninstall XOVI out from under the shell.
+- **failures warn, they do not abort.** Activation runs at boot; an offline
+  tablet still has to get its units and AppLoad entries, so `vellum add` errors
+  are reported and the rest of the generation applies.
+
+The apk database stays vellum's: the generation records *intent*, and
+`vellum list` / `vellum del` remain the truth for what is actually installed.
 
 ## Nix on the tablet
 
@@ -310,7 +429,19 @@ hours of aarch64 code compiled on an emulated CPU.
   stack is built from (qt-resource-rebuilder, AppLoad)
 - <https://github.com/MaximeRivest/android-on-remarkable-paper-pro> — Android
   13 on the Paper Pro (MIT), whose runtime and device files `rmpp_android`
-  packages
+  packages and whose kernel fragment/DT patch `rmpp_kernel` builds
+- <https://github.com/reMarkable/linux-imx-rm> — reMarkable's published GPL
+  kernel source (the branch tarball `rmpp_kernel` builds)
+- <https://github.com/skdlzlvk/paper-pro-move-dualboot-installer> — the A/B slot
+  layout, boot watchdog behaviour and flash-safety notes behind
+  `rmpp_kernel`'s warning
+- <https://github.com/numtide/system-manager> — the module → generation →
+  activate model `system.nix` follows
+- <https://github.com/vellum-dev/vellum> and
+  <https://github.com/vellum-dev/vellum-cli> — the apk-based package ecosystem
+  (and `mount-utils`) this layer stays out of the way of
+- <https://github.com/asivery/rm-appload> — AppLoad external manifests, and the
+  `qtfb` flag that allocates a QTFB framebuffer (`QTFB_KEY`)
 - <https://github.com/kja140/rmpro-hacks> — field notes for Syncthing,
   Tailscale and friends on the Paper Pro
 - <https://nixos.org/manual/nix/stable/installation/installing-binary> —

@@ -55,7 +55,7 @@
 #
 # This is the expensive part of the browser: a full WebKit build is hours on
 # many cores and needs a lot of RAM to link (see
-# ../../remarkable-paper-pro.md). It is a normal nixpkgs derivation, so it
+# remarkable-paper-pro.md). It is a normal nixpkgs derivation, so it
 # builds natively for aarch64-linux with the host's own gcc and cmake.
 stdenv.mkDerivation (finalAttrs: {
   pname = "wpewebkit";

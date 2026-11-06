@@ -20,7 +20,9 @@
   };
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # The channel tarball, not the GitHub mirror: same nixpkgs, and `nix flake
+    # update` then follows the stable URL rather than a branch name.
+    nixpkgs.url = "https://nixos.org/channels/nixpkgs-unstable/nixexprs.tar.zst";
     flake-parts.url = "github:hercules-ci/flake-parts";
 
     # Adapted here: the Waydroid/e-ink stack for the Paper Pro. Only its
@@ -40,10 +42,9 @@
         "aarch64-linux"
       ];
 
-      imports = [
-        ./remarkable
-        ./remarkable/rmweb
-        (import ./remarkable/android { inherit inputs; })
-      ];
+      # One flat module (default.nix) defines every package; the derivations
+      # it calls live next to it. It needs the inputs for the pinned Android
+      # files (kernel config fragment, GPU DT patch, scripts).
+      imports = [ (import ./default.nix { inherit inputs; }) ];
     };
 }
