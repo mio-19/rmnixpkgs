@@ -1,0 +1,22 @@
+tee: optee: drop the dropped id argument from supp_pop_entry().
+
+Adapted from
+  https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-6.12.93-94.xz
+
+6.12.93-94 reworked the supplicant request lifetime: request IDs live in
+supp->idr and are assigned in optee_supp_thrd_req(), so supp_pop_entry() no
+longer takes an `int *id`. The chain updated this file's call site but its
+definition hunk found no context, leaving a three-argument definition with a
+two-argument caller. One parameter goes.
+
+--- a/drivers/tee/optee/supp.c
++++ b/drivers/tee/optee/supp.c
+@@ -164,7 +164,7 @@
+ }
+ 
+ static struct optee_supp_req  *supp_pop_entry(struct optee_supp *supp,
+-					      int num_params, int *id)
++					      int num_params)
+ {
+ 	struct optee_supp_req *req;
+ 

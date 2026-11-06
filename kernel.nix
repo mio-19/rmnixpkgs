@@ -58,28 +58,45 @@ let
   # range; the patch header explains it and links upstream.
   ioHeaderBackport = ./kernel-ioremap-prot.patch;
 
-  # 6.12.114 reworked the syscore API in one sweep and could not convert
-  # reMarkable's NXP drivers, which left the tree inconsistent; this reverses
-  # that rework. The patch header has the details.
-  syscoreRevert = ./kernel-syscore-revert.patch;
+  # gpio-mxc: two field widths and one local the chain left half-applied -- its
+  # conversion hunks landed, the struct and declaration hunks did not. The
+  # header lists both upstream levels.
+  gpioBackports = ./kernel-gpio-mxc-backports.patch;
 
-  # The chain converted gpio-mxc's edge bits to clear_bit()/set_bit() but could
-  # not widen the field they index; see the patch header.
-  gpioBothEdges = ./kernel-gpio-mxc-both-edges.patch;
+  # iw61x: the driver's own version guard for the set_monitor_channel argument
+  # that 6.12.100 backported; see the patch header.
+  iw61xMonitorChannel = ./kernel-iw61x-monitor-channel.patch;
+
+  # The rest of the port: five places where a stable level changed an API or a
+  # struct that its NXP counterpart in this tree still uses. Each file names its
+  # level and why the hunk could not land in its header.
+  resetControlFlags = ./kernel-reset-control-flags.patch;
+  gpcv2Hsk = ./kernel-imx-gpcv2-gpumix-hsk.patch;
+  imx8mErrata = ./kernel-imx8m-blk-ctrl-errata-field.patch;
+  imx8mpPowerNb = ./kernel-imx8mp-blk-ctrl-power-nb.patch;
+  opteeSupp = ./kernel-optee-supp-pop-entry.patch;
   stableLevels = lib.range stable.first stable.last;
 
   # One fetch per incremental patch, straight from where the stable
   # maintainers publish them; the hashes live in os.nix with the source pin.
-  stablePatches = lib.optionals applyStablePatches (
-    map (
-      level:
-      fetchurl {
-        name = "patch-${baseVersion}.${toString (level - 1)}-${toString level}.xz";
-        url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-${baseVersion}.${toString (level - 1)}-${toString level}.xz";
-        hash = stable.hashes.${toString level};
-      }
-    ) stableLevels
-  );
+  stablePatch =
+    level:
+    fetchurl {
+      name = "patch-${baseVersion}.${toString (level - 1)}-${toString level}.xz";
+      url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-${baseVersion}.${toString (level - 1)}-${toString level}.xz";
+      hash = stable.hashes.${toString level};
+    };
+  stablePatches = lib.optionals applyStablePatches (map stablePatch stableLevels);
+
+  # 6.12.114 reworked the syscore API in one sweep and could not convert
+  # reMarkable's NXP drivers, which left the tree inconsistent; the build applies
+  # that level and then reverses it. The reversal uses the upstream patch from
+  # kernel.org rather than a committed reversed copy: a 5000-line mirror of it
+  # would drift, and reversing is mechanical. 114 is the level that carried the
+  # rework, not a pin of the OS (os.nix owns `stable`). Only its syscore blocks
+  # are reversed: 114 also carries unrelated fixes (io_uring, smart suspend)
+  # that must stay.
+  syscoreRework = stablePatch 114;
 in
 assert lib.assertMsg
   (!applyStablePatches || lib.toInt (lib.versions.patch os.kernel.version) + 1 == stable.first)
@@ -227,15 +244,39 @@ stdenv.mkDerivation (finalAttrs: {
       # Take the rework back out: it is a refactor, not a security fix. Failures
       # here are expected (the very files it could not patch) and are not an
       # error; --forward keeps it from applying anything twice.
-      patch -R -p1 --batch --forward < ${syscoreRevert} > "$TMPDIR/stable/syscore-revert.log" 2>&1 || true
+      #
+      # Only the diff blocks that use the syscore API are reversed. 114 is a
+      # stable release, so it also carries unrelated fixes (io_uring, smart
+      # suspend) that must stay applied; those blocks are exactly the files the
+      # rework touched.
+      xz -dc ${syscoreRework} > "$TMPDIR/stable/114.patch"
+      awk '/^diff --git / { if (buf != "" && buf ~ /syscore_ops/) printf "%s", buf; buf = "" }
+           { buf = buf $0 ORS }
+           END { if (buf ~ /syscore_ops/) printf "%s", buf }' \
+        "$TMPDIR/stable/114.patch" > "$TMPDIR/stable/114-syscore.patch"
+      patch -R -p1 --batch --forward < "$TMPDIR/stable/114-syscore.patch" > "$TMPDIR/stable/syscore-revert.log" 2>&1 || true
       printf 'reverted %s\n' 'syscore API rework (patch-6.12.113-114)' >> "$TMPDIR/stable/report"
 
-      # One line the chain half-applied: it made gpio-mxc's edge mask a bit
-      # index for clear_bit()/set_bit(), but the hunk widening both_edges from
-      # u32 to unsigned long found no context in reMarkable's struct, and GCC 16
-      # rejects the u32 pointer. Must apply.
-      patch -p1 < ${gpioBothEdges}
-      printf 'backport %s\n' 'gpio-mxc both_edges width (patch-6.12.114-115)' >> "$TMPDIR/stable/report"
+      # The chain converted gpio-mxc to bitops but its struct hunk (both_edges
+      # and wakeup_pads to unsigned long) found no context, and the is_imx8qm
+      # local it uses was added by a hunk that also touched a pad_type_map entry
+      # this tree already has. Must apply.
+      patch -p1 < ${gpioBackports}
+      printf 'backport %s\n' 'gpio-mxc field widths and is_imx8qm (patch-6.12.80-81, 114-115)' >> "$TMPDIR/stable/report"
+
+      # 6.12.100 backported cfg80211's net_device argument for
+      # set_monitor_channel (a 6.13 API change), but the NXP driver still gates
+      # that argument on 6.13. Must apply.
+      patch -p1 < ${iw61xMonitorChannel}
+      printf 'backport %s\n' 'iw61x set_monitor_channel guard (patch-6.12.100-101)' >> "$TMPDIR/stable/report"
+
+      # The remaining API/struct drift the chain left in NXP code: reset flags,
+      # a gpcv2 parent handshake, two pmdomain structs and optee's supplicant.
+      # Each patch is the missing semantic change only; see the headers.
+      for extra in ${resetControlFlags} ${gpcv2Hsk} ${imx8mErrata} ${imx8mpPowerNb} ${opteeSupp}; do
+        patch -p1 < "$extra"
+        printf 'port     %s\n' "$(basename "$extra")" >> "$TMPDIR/stable/report"
+      done
     ''}
 
     # Upstream step 1: enable the Vivante GPU in the device tree.
@@ -300,8 +341,16 @@ stdenv.mkDerivation (finalAttrs: {
       install -Dm644 "$TMPDIR/stable/report" $out/share/rmpp-kernel/security-patches
       install -Dm644 "$TMPDIR/stable/rejects" $out/share/rmpp-kernel/security-patch-rejects
       install -Dm644 ${ioHeaderBackport} $out/share/rmpp-kernel/ioremap-prot-backport.patch
-      install -Dm644 ${syscoreRevert} $out/share/rmpp-kernel/syscore-revert.patch
-      install -Dm644 ${gpioBothEdges} $out/share/rmpp-kernel/gpio-mxc-both-edges.patch
+      install -Dm644 ${gpioBackports} $out/share/rmpp-kernel/gpio-mxc-backports.patch
+      install -Dm644 ${iw61xMonitorChannel} $out/share/rmpp-kernel/iw61x-monitor-channel.patch
+      install -Dm644 ${resetControlFlags} $out/share/rmpp-kernel/reset-control-flags.patch
+      install -Dm644 ${gpcv2Hsk} $out/share/rmpp-kernel/imx-gpcv2-gpumix-hsk.patch
+      install -Dm644 ${imx8mErrata} $out/share/rmpp-kernel/imx8m-blk-ctrl-errata-field.patch
+      install -Dm644 ${imx8mpPowerNb} $out/share/rmpp-kernel/imx8mp-blk-ctrl-power-nb.patch
+      install -Dm644 ${opteeSupp} $out/share/rmpp-kernel/optee-supp-pop-entry.patch
+      # The exact subset of the 6.12.114 patch that the build reversed, derived
+      # from it at build time; the source level is named in the report.
+      install -Dm644 "$TMPDIR/stable/114-syscore.patch" $out/share/rmpp-kernel/syscore-revert.patch
     ''}
 
     runHook postInstall

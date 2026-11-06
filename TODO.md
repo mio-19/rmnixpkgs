@@ -10,8 +10,10 @@ State: every package evaluates natively on aarch64, and all eight build on
 real aarch64 hardware (OrbStack `nixos` VM) — `.#rmpp_tools`,
 `.#rmpp_nix_setup`, `.#rmpp_config`, `.#rmpp_android`, `.#rmpp_android_files`,
 `.#rmpp_rmweb_prebuilt`, `.#rmpp_rmweb` (engine and app from source) and
-`.#rmpp_kernel`. Nothing has run on the tablet yet, and `rmpp_rmweb` has never
-rendered a frame (the display path below is still open).
+`.#rmpp_kernel`, the last one both as the published vendor tree and as
+6.12.115-waydroid with the whole stable chain (now the default). Nothing has
+run on the tablet yet, and `rmpp_rmweb` has never rendered a frame (the display
+path below is still open).
 
 ## Done
 
@@ -67,10 +69,9 @@ rendered a frame (the display path below is still open).
       `default.nix` records 6.12.115 as the kernel release when it is on, and
       activation compares `uname -r` against 6.12.115-waydroid. The build
       prints what applied and ships the rejects.
-      **Compiled on aarch64: the chain does not produce a working tree on this
-      vendor base**, so the switch now defaults to **off** and the flake builds
-      the published vendor kernel (6.12.49-waydroid). Details and the three
-      generated backports are below.
+      **Compiled on aarch64 with the switch on**: the tree builds at
+      6.12.115-waydroid after carrying the port described below, so the switch
+      defaults to **on** in config.nix.
 - [x] `nixfmt` clean; every package evaluates (`nix eval .#…drvPath`);
       `.#rmpp_tools` verified to substitute from cache.nixos.org (aarch64 ELF).
 - [x] Docs: `remarkable-paper-pro.md` covers the flake, the source build and the
@@ -124,6 +125,15 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   `CONFIG_DRM_SCHED=m`, `CONFIG_LOCALVERSION="-waydroid"`. With the chain off
   there is deliberately no `share/rmpp-kernel/security-*` file: absence means
   "no fixes applied", not "all applied".
+- `rmpp_kernel` 6.12.115-waydroid (chain on, the default): **builds**, same
+  recipe and time. Verified: `fitImage` 15,548,032 bytes, `Image` 15,335,432,
+  605 dtbs (4 `ferrari-rev-*`), modules in `lib/modules/6.12.115-waydroid`
+  plus a 3.8 MB tarball, `CONFIG_DRM_ETNAVIV=m`/`CONFIG_DRM_SCHED=m`, and
+  `share/rmpp-kernel/security-patches` recording 25 clean / 41 partial and the
+  100 rejected hunks, plus every backport and port applied.
+- A `make -k` sweep in a `--keep-failed` tree is useful for listing failures
+  but is not proof: it once hid an `io_uring` error because the `.o` predated
+  the patch that broke it. The clean `nix build` is the arbiter.
 - Four build-system traps fixed while getting there: `dtc` must be in
   `nativeBuildInputs` (`mkimage -f ferrari.its` shells out to it; the in-tree
   `scripts/dtc` is not on PATH); `installPhase` must use
@@ -245,25 +255,39 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   flips slots after repeated late-UI reboots (dualboot installer notes).
   `install-kernel.sh` backs the stock fitImage up to
   `/home/root/waydroid/backup` and renames the new one into place atomically.
-- Stable chain on this tree, compiled: **25 clean / 41 partial / 100 rejected
-  hunks** (the measurement above), and the rejects are not all driver drift.
-  Three are core breakage and are vendored as patches here, each with its
-  upstream incr-patch URL in the header and no formatting-only change:
-  `kernel-ioremap-prot.patch` (arm64 `ioremap_prot`; without it `io.h` calls
-  `__ioremap_prot()` undeclared), `kernel-syscore-revert.patch` (6.12.114's
-  syscore rework reversed as a unit — a refactor, not a security fix — because
-  it converts the header but not reMarkable's NXP callers), and
-  `kernel-gpio-mxc-both-edges.patch` (`struct mxc_gpio_port.both_edges` widened
-  to `unsigned long`, one line; GCC 16 rejects the `u32` pointer).
-- Past those three, a `make -k` sweep shows the chain expects driver
-  conversions the vendor tree cannot take: `3rdparty/nxp-iw61x-driver/…
-  moal_sta_cfg80211.c` (cfg80211 API), `sec_mipi_dsim-imx.c`,
-  `lcdif-common.c`, `pmdomain/imx/gpcv2.c`
-  (`IMX8MM_GPUMIX_HSK_PWRDNREQN/ACKN`), `imx8m-blk-ctrl.c` /
-  `imx8mp-blk-ctrl.c` member renames, and `gpio-mxc.c:598` (`is_imx8qm`).
-  Finishing the chain is a port of those drivers, not a patch — hence
-  `rmpp.kernel.securityPatches.enable = false`. The three backports stay in
-  `kernel.nix` for the chain-on path.
+- Stable chain on this tree: the switch is **on** and the kernel builds at
+  6.12.115-waydroid. The chain itself still reports **25 clean / 41 partial /
+  100 rejected hunks** (measured above); what changed is that the tree now
+  compiles with those applied, by carrying the smallest patch for every place
+  where a chain level and reMarkable's NXP code disagree. Eight files, each
+  with the upstream incr-patch URL in its header and no formatting-only change:
+  - `kernel-ioremap-prot.patch` — arm64 `ioremap_prot`; without it `io.h` calls
+    `__ioremap_prot()` undeclared.
+  - `kernel-gpio-mxc-backports.patch` — `both_edges`/`wakeup_pads` to
+    `unsigned long` and the missing `is_imx8qm` local (6.12.80-81, 114-115).
+  - `kernel-iw61x-monitor-channel.patch` — the NXP wifi driver's guard for the
+    `net_device` argument 6.12.100 backported into `set_monitor_channel`.
+  - `kernel-reset-control-flags.patch` — two `of_reset_control_array_get()`
+    callers to `RESET_CONTROL_EXCLUSIVE` (6.12.90-91).
+  - `kernel-imx-gpcv2-gpumix-hsk.patch` — drop the GPUMIX handshake the chain
+    removed from the parent domain entry (6.12.69-70).
+  - `kernel-imx8m-blk-ctrl-errata-field.patch` — the `is_errata_err050531`
+    member, default false: no domain in this tree sets it.
+  - `kernel-imx8mp-blk-ctrl-power-nb.patch` — the per-domain notifier member
+    and its add/remove calls (6.12.69-70).
+  - `kernel-optee-supp-pop-entry.patch` — `supp_pop_entry()` loses the `id`
+    parameter the chain dropped (6.12.93-94).
+- The 6.12.114 syscore revert is **derived at build time**, not committed:
+  `kernel.nix` decomposes the upstream `.xz` and reverses only the diff blocks
+  that use `syscore_ops`. That filter selects exactly the 109 files the rework
+  touched; reversing the whole 1171-file patch also reverts io_uring and
+  smart-suspend fixes that must stay. It is a refactor, not a security fix, and
+  reMarkable's irq-gic-v3/imx-gpcv2/gpio-vf610/pinctrl-imx/scu-pd were not
+  converted. The build ships the derived subset as `syscore-revert.patch`.
+- The 100 rejected hunks are still missing fixes, not applied ones: they are
+  listed per file in `share/rmpp-kernel/security-patch-rejects`, and sit in
+  NXP/vendor code (`imx8-isi`, `enetc`, `fsl-edma`, i.MX dtsi, …) whose context
+  vanilla upstream does not have. Nothing was reformatted to make one apply.
 
 ### Ecosystem on the device (what a config layer must not break)
 - **vellum** (`https://github.com/vellum-dev/vellum`, apk-based) keeps
@@ -328,16 +352,17 @@ option 1.
       `/home/root/rmweb`, `install.sh`, page turns, downloads, AppLoad icon.
 - [ ] Test `rmpp_android` on device: `labwc` start, Waydroid bring-up, GPU
       (mesa's etnaviv drivers are linked into `$env/lib/dri`).
-- [x] Build `.#rmpp_kernel` on aarch64 hardware and check the output: fitImage
-      (15 MB, Image + dtbs), `CONFIG_DRM_ETNAVIV=m`, a `6.12.49-waydroid`
-      module tree, patched ferrari dtb — done, and the stable chain was tried:
-      it does not compile here, so it is off. See the chain notes above.
-- [ ] Finish the stable-chain port if kernel security fixes matter more than
-      the vendor base: convert the NXP drivers the chain leaves behind
-      (`pmdomain/imx/gpcv2.c`, `imx8m{,p}-blk-ctrl.c`, `gpio-mxc.c`,
-      `lcdif-common.c`, `sec_mipi_dsim-imx.c`, the iw61x cfg80211 glue), then
-      flip `rmpp.kernel.securityPatches.enable` back on and confirm the three
-      vendored backports still apply.
+- [x] Build `.#rmpp_kernel` on aarch64 hardware and check the output: fitImage,
+      Image, dtbs, `CONFIG_DRM_ETNAVIV=m`, patched ferrari dtb — both without
+      the chain (6.12.49-waydroid) and with it (**6.12.115-waydroid**, the
+      default). See "Builds on aarch64 (verified)".
+- [x] Port the stable chain so it compiles: the eight patched files above, the
+      derived syscore revert, the switch on, and a clean Nix build at
+      6.12.115-waydroid.
+- [ ] Chase the remaining 100 rejected hunks if any of them matters for this
+      device: `share/rmpp-kernel/security-patch-rejects` is the list, and each
+      needs a hand port like the eight above (mostly imx8-isi/enetc/fsl-edma,
+      which this device does not use).
 - [ ] Flash the kernel on a device (after the backup) and verify
       `/dev/dri/renderD128` appears, `etnaviv` is in dmesg, and Mesa's etnaviv
       driver loads; then check whether rmweb can use it

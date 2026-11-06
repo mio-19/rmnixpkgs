@@ -1,0 +1,23 @@
+pmdomain: gpcv2 still handshakes the GPUMIX signals from the GPU domain's
+parent_bits, after the chain merged those macros away.
+
+Adapted from
+  https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-6.12.69-70.xz
+
+That level merged IMX8MM_GPUMIX_HSK_PWRDN{REQN,ACKN} into the GENMASK-ed
+IMX8MM_GPU_HSK_PWRDN* macros and dropped the handshake from the GPUMIX parent
+entry -- the macro hunks applied to this tree, the entry hunk did not, so the
+entry still names macros that no longer exist. The two lines go; the parent
+keeps its pxx/map/pgc.
+
+--- a/drivers/pmdomain/imx/gpcv2.c
++++ b/drivers/pmdomain/imx/gpcv2.c
+@@ -930,8 +930,6 @@
+ 		.parent_bits = {
+ 			.pxx = IMX8MM_GPUMIX_SW_Pxx_REQ,
+ 			.map = IMX8MM_GPUMIX_A53_DOMAIN,
+-			.hskreq = IMX8MM_GPUMIX_HSK_PWRDNREQN,
+-			.hskack = IMX8MM_GPUMIX_HSK_PWRDNACKN,
+ 			.pgc = BIT(IMX8MM_PGC_GPUMIX),
+ 		},
+ 

@@ -1,0 +1,33 @@
+reset: two NXP callers still pass the old (shared, optional, acquired) booleans
+to of_reset_control_array_get().
+
+Adapted from
+  https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-6.12.90-91.xz
+
+That level replaced those booleans with enum reset_control_flags, and the chain
+applied it to the header while these two vendor drivers kept the four-argument
+call. `(child, false, false, true)` means shared=no, optional=no, acquired=yes,
+which the enum spells RESET_CONTROL_EXCLUSIVE; only the argument changes.
+
+--- a/drivers/gpu/drm/imx/sec_mipi_dsim-imx.c
++++ b/drivers/gpu/drm/imx/sec_mipi_dsim-imx.c
+@@ -334,7 +334,7 @@
+ 		if (!compat)
+ 			continue;
+ 
+-		rstc = of_reset_control_array_get(child, false, false, true);
++		rstc = of_reset_control_array_get(child, RESET_CONTROL_EXCLUSIVE);
+ 		if (IS_ERR(rstc))
+ 			continue;
+ 
+--- a/drivers/gpu/imx/lcdif/lcdif-common.c
++++ b/drivers/gpu/imx/lcdif/lcdif-common.c
+@@ -745,7 +745,7 @@
+ 		if (!compat)
+ 			continue;
+ 
+-		rstc = of_reset_control_array_get(child, false, false, true);
++		rstc = of_reset_control_array_get(child, RESET_CONTROL_EXCLUSIVE);
+ 		if (IS_ERR(rstc))
+ 			continue;
+ 

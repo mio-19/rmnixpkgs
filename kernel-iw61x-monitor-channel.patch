@@ -1,0 +1,30 @@
+Adapted from
+  https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-6.12.100-101.xz
+
+That level backports the net_device argument of cfg80211_ops.set_monitor_channel
+(a 6.13 API change). The NXP iw61x driver already carries the new signature
+behind `#if CFG80211_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)`, so with the tree
+still reporting 6.12 the guard excludes the argument the patched header now
+requires and the ops initialiser fails. The guard moves to 6.12.100, the level
+that actually carries the backport; no other line of the driver changes.
+
+--- a/3rdparty/nxp-iw61x-driver/drivers/net/wireless/nxp/iw61x/wlan_src/mlinux/moal_sta_cfg80211.c
++++ b/3rdparty/nxp-iw61x-driver/drivers/net/wireless/nxp/iw61x/wlan_src/mlinux/moal_sta_cfg80211.c
+@@ -135,7 +135,7 @@
+ #ifdef UAP_SUPPORT
+ #if CFG80211_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static int woal_cfg80211_set_monitor_channel(struct wiphy *wiphy,
+-#if CFG80211_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
++#if CFG80211_VERSION_CODE >= KERNEL_VERSION(6, 12, 100)
+ 					     struct net_device *dev,
+ #endif
+ 					     struct cfg80211_chan_def *chandef);
+@@ -707,7 +707,7 @@
+ #ifdef UAP_SUPPORT
+ #if CFG80211_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static int woal_cfg80211_set_monitor_channel(struct wiphy *wiphy,
+-#if CFG80211_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
++#if CFG80211_VERSION_CODE >= KERNEL_VERSION(6, 12, 100)
+ 					     struct net_device *dev,
+ #endif
+ 					     struct cfg80211_chan_def *chandef)

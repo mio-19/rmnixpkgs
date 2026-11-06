@@ -1,0 +1,31 @@
+pmdomain: give imx8m_blk_ctrl_domain_data the errata flag the chain's power-on
+path already tests.
+
+Adapted from
+  https://cdn.kernel.org/pub/linux/kernel/v6.x/incr/patch-6.12.96-97.xz
+
+6.12.96-97 taught imx8m_blk_ctrl_power_on() to gate VC8000E's clocks around the
+reset (errata err050531) behind a per-domain flag; those hunks applied, the
+struct member did not, so the file does not compile. Only the member is added
+here, defaulting to false: no domain in this vendor tree sets it (the upstream
+table hunk targets a domain layout this tree does not have), so the workaround
+stays off exactly as published.
+
+--- a/drivers/pmdomain/imx/imx8m-blk-ctrl.c
++++ b/drivers/pmdomain/imx/imx8m-blk-ctrl.c
+@@ -77,6 +77,15 @@
+ 	notifier_fn_t power_notifier_fn;
+ 	const struct imx8m_blk_ctrl_hurry_data *hurry_data;
+ 	const struct imx8m_blk_ctrl_noc_data *noc_data[DOMAIN_MAX_NOC];
++
++	/*
++	 * VC8000E reset de-assertion edge and AXI clock may have a timing issue.
++	 * Workaround: Set bit2 (vc8000e_clk_en) of BLK_CLK_EN_CSR to 0 to gate off
++	 * both AXI clock and VC8000E clock sent to VC8000E and AXI clock sent to
++	 * VPU_NOC m_v_2 interface during VC8000E power up(VC8000E reset is
++	 * de-asserted by HW)
++	 */
++	bool is_errata_err050531;
+ };
+ 
+ #define DOMAIN_MAX_CLKS 4
