@@ -43,7 +43,9 @@ VELLUM_STATE=$STATE/vellum-managed
 # TODO.md — /home/root/.vellum/lib/apk/db holds apk's `installed` file).
 VELLUM_DB=${VELLUM_DB:-/home/root/.vellum/lib/apk/db/installed}
 # Where the OS reports its own release. Overridable so the check can be exercised
-# off-device (see the checks in remarkable-paper-pro.md).
+# off-device (see the checks in remarkable-paper-pro.md). On 3.28+, /etc/version is
+# a build datestamp and IMG_VERSION in /etc/os-release is the semantic version.
+OS_RELEASE_FILE=${OS_RELEASE_FILE:-/etc/os-release}
 OS_VERSION_FILE=${OS_VERSION_FILE:-/etc/version}
 MARKER=.rmpp-config
 BOOT_UNIT=rmpp-config.service
@@ -53,6 +55,20 @@ warn() { printf 'rmpp-config: warn: %s\n' "$*" >&2; }
 die() {
 	printf 'rmpp-config: error: %s\n' "$*" >&2
 	exit 1
+}
+
+# BusyBox ash on the device lacks the GNU `install` applet.
+install_file() {
+	_mode="$1"
+	_src="$2"
+	_dst="$3"
+	if command -v install >/dev/null 2>&1; then
+		install -D -m "$_mode" "$_src" "$_dst"
+	else
+		mkdir -p "$(dirname "$_dst")"
+		cp -f "$_src" "$_dst"
+		chmod "$_mode" "$_dst"
+	fi
 }
 
 usage() {
@@ -105,10 +121,16 @@ check_os() {
 
 	want_os=$(sed -n 's/^version=//p' "$gen/os")
 	want_kernel=$(sed -n 's/^kernel-version=//p' "$gen/os")
-	have_os=$(head -n1 "$OS_VERSION_FILE" 2>/dev/null | tr -d ' \t\r\n' || true)
+	have_os=""
+	if [ -f "$OS_RELEASE_FILE" ]; then
+		have_os=$(awk -F= '$1=="IMG_VERSION"{gsub(/["\x27]/,"",$2); print $2}' "$OS_RELEASE_FILE" 2>/dev/null || true)
+	fi
+	if [ -z "$have_os" ] && [ -f "$OS_VERSION_FILE" ]; then
+		have_os=$(head -n1 "$OS_VERSION_FILE" 2>/dev/null | tr -d ' \t\r\n' || true)
+	fi
 
 	if [ -z "$have_os" ]; then
-		warn "cannot read the installed reMarkable OS version from $OS_VERSION_FILE"
+		warn "cannot read the installed reMarkable OS version from $OS_RELEASE_FILE or $OS_VERSION_FILE"
 		warn "this generation was built for $want_os; expect kernel/ABI mismatches"
 	elif [ "$(os_short "$have_os")" = "$(os_short "$want_os")" ]; then
 		log "reMarkable OS $have_os matches the generation ($want_os)"
@@ -175,7 +197,7 @@ apply_etc() {
 	while read -r file_mode rel; do
 		[ -n "$rel" ] || continue
 		[ -f "$gen/etc/$rel" ] || continue
-		install -D -m "$file_mode" "$gen/etc/$rel" "/etc/$rel"
+		install_file "$file_mode" "$gen/etc/$rel" "/etc/$rel"
 	done <"$gen/etc.modes"
 }
 
@@ -203,7 +225,7 @@ apply_units() {
 	[ -d "$gen/systemd" ] || return 0
 	for unit in "$gen/systemd"/*.service; do
 		[ -f "$unit" ] || continue
-		install -D -m 644 "$unit" "/etc/systemd/system/$(basename "$unit")"
+		install_file 644 "$unit" "/etc/systemd/system/$(basename "$unit")"
 	done
 
 	if [ -s "$gen/systemd.enable" ]; then
@@ -396,7 +418,7 @@ install_boot_unit() {
 	fi
 	trap 'restore' EXIT HUP INT TERM
 
-	install -D -m 644 "$gen/systemd/$BOOT_UNIT" "/etc/systemd/system/$BOOT_UNIT"
+	install_file 644 "$gen/systemd/$BOOT_UNIT" "/etc/systemd/system/$BOOT_UNIT"
 	mkdir -p /etc/systemd/system/multi-user.target.wants
 	ln -sf "../$BOOT_UNIT" "/etc/systemd/system/multi-user.target.wants/$BOOT_UNIT"
 	command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload || true

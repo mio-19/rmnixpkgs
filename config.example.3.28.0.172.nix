@@ -107,9 +107,20 @@
     vellum = {
       enable = true;
       packages = [
-        # "koreader"
-        # "appload"
-        # "xovi-tripletap"
+        "appload"
+        "ghostbuster"
+        "hide-dev-mode-icon"
+        "koreader"
+        "librarian"
+        "mount-utils"
+        "netsurf"
+        "qt-resource-rebuilder"
+        "tripletap"
+        "vellum"
+        "vellum-bash-completion"
+        "xovi"
+        "xovi-extensions"
+        "xovi-message-broker"
       ];
       onActivation = {
         autoUpdate = false;

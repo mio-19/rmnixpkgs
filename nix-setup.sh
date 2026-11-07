@@ -142,6 +142,19 @@ install_nix_release() {
 
 	[ -x "$tmp/nix-$version-aarch64-linux/install" ] || die "unexpected Nix tarball layout"
 
+	# BusyBox cp lacks --preserve=ownership,timestamps (supported on GNU cp).
+	# Use -p which BusyBox cp accepts and preserves timestamps and permissions.
+	sed -i 's/--preserve=ownership,timestamps/-p/' "$tmp/nix-$version-aarch64-linux/install"
+
+	# Single-user root install needs nixbld group or disabled build-users-group.
+	addgroup -S nixbld 2>/dev/null || groupadd -r nixbld 2>/dev/null || true
+	mkdir -p /etc/nix
+	if [ ! -f /etc/nix/nix.conf ]; then
+		printf 'build-users-group =\n' >/etc/nix/nix.conf
+	elif ! grep -q 'build-users-group' /etc/nix/nix.conf; then
+		printf 'build-users-group =\n' >>/etc/nix/nix.conf
+	fi
+
 	# Single-user install into the bind-mounted /nix. --no-channel-add keeps it
 	# from pulling a nixpkgs channel (this repo pins its own nixpkgs), and the
 	# profile snippet it appends lands in /home/root, which persists.
@@ -237,7 +250,10 @@ if [ "$persist" = yes ]; then
 fi
 
 # 6. Restore the stock read-only root filesystem.
-if [ "$keep_rw" = no ] && is_root_rw; then
+if [ -x /home/root/.vellum/bin/mount-restore ]; then
+	log "restoring /etc overlay and remounting / read-only via mount-restore"
+	/home/root/.vellum/bin/mount-restore || log "warning: mount-restore failed"
+elif [ "$keep_rw" = no ] && is_root_rw; then
 	log "remounting / read-only"
 	mount -o remount,ro / || log "warning: could not remount / read-only"
 fi
