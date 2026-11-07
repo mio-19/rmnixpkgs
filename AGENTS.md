@@ -17,7 +17,7 @@ are no per-component subdirectories:
 | `chromium.nix` | Chromium browser on e-ink: binary cache Chromium + source-built CDP driver & Quill viewer |
 | `einkbridge.nix`, `einkbridge.c`, `einkbridge-wire.h`, `quill-host.c` | our Wayland screencopy → e-paper bridge and its isolated vendor-display worker |
 | `quill.nix` | Quill, from source against the OS's Qt |
-| `system.nix`, `config.nix`, `activate.sh` | declarative configuration: the module, this device's config, the activation script |
+| `system.nix`, `config.nix`, `config.example.*.nix`, `activate.sh` | declarative configuration: the module, this device's config, example configs, the activation script |
 | `nix-setup.sh` | device-side persistent-store setup script |
 | `test-*`, `check-waydroid-*` | flake checks (`nix flake check` on the aarch64 builder); never installed on the tablet |
 | `remarkable-paper-pro.md`, `TODO.md` | device notes; verified facts and open work |
