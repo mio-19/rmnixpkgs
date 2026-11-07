@@ -502,6 +502,7 @@ in
                   pkgs.gnused
                   pkgs.gnugrep
                   pkgs.gawk
+                  pkgs.diffutils
                 ]
               }"
             chmod 755 $out/activate

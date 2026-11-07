@@ -31,9 +31,8 @@
 # not start with rmpp-.
 set -eu
 
-# Tools from the Nix store take precedence over device BusyBox utilities.
-# When built into a generation, @extraPath@ is substituted with coreutils,
-# gnused, gnugrep, gawk from /nix/store.
+# Guaranteed utilities from the Nix store (coreutils, gnused, gnugrep, gawk,
+# diffutils) take precedence over host BusyBox paths.
 if [ -n "@extraPath@" ] && [ "@extraPath@" != "@""extraPath@" ]; then
 	PATH="@extraPath@:$PATH"
 	export PATH
@@ -63,20 +62,6 @@ warn() { printf 'rmpp-config: warn: %s\n' "$*" >&2; }
 die() {
 	printf 'rmpp-config: error: %s\n' "$*" >&2
 	exit 1
-}
-
-# BusyBox ash on the device lacks the GNU `install` applet.
-install_file() {
-	_mode="$1"
-	_src="$2"
-	_dst="$3"
-	if command -v install >/dev/null 2>&1; then
-		install -D -m "$_mode" "$_src" "$_dst"
-	else
-		mkdir -p "$(dirname "$_dst")"
-		cp -f "$_src" "$_dst"
-		chmod "$_mode" "$_dst"
-	fi
 }
 
 usage() {
@@ -207,7 +192,7 @@ apply_etc() {
 	while read -r file_mode rel; do
 		[ -n "$rel" ] || continue
 		[ -f "$gen/etc/$rel" ] || continue
-		install_file "$file_mode" "$gen/etc/$rel" "/etc/$rel"
+		install -D -m "$file_mode" "$gen/etc/$rel" "/etc/$rel"
 	done <"$gen/etc.modes"
 }
 
@@ -235,7 +220,7 @@ apply_units() {
 	[ -d "$gen/systemd" ] || return 0
 	for unit in "$gen/systemd"/*.service; do
 		[ -f "$unit" ] || continue
-		install_file 644 "$unit" "/etc/systemd/system/$(basename "$unit")"
+		install -D -m 644 "$unit" "/etc/systemd/system/$(basename "$unit")"
 	done
 
 	if [ -s "$gen/systemd.enable" ]; then
@@ -428,7 +413,7 @@ install_boot_unit() {
 	fi
 	trap 'restore' EXIT HUP INT TERM
 
-	install_file 644 "$gen/systemd/$BOOT_UNIT" "/etc/systemd/system/$BOOT_UNIT"
+	install -D -m 644 "$gen/systemd/$BOOT_UNIT" "/etc/systemd/system/$BOOT_UNIT"
 	mkdir -p /etc/systemd/system/multi-user.target.wants
 	ln -sf "../$BOOT_UNIT" "/etc/systemd/system/multi-user.target.wants/$BOOT_UNIT"
 	command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload || true
