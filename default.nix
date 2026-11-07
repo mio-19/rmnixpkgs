@@ -55,6 +55,8 @@
             pkgs = rmppPkgs;
             rmppAndroid = config.packages.rmpp_android;
             rmppAndroidIcon = "${upstream}/device/icon.png";
+            rmppChromium = config.packages.rmpp_chromium;
+            rmppChromiumIcon = "${config.packages.rmpp_chromium.src}/chromium/icon.png";
           };
         };
 
@@ -369,6 +371,12 @@
           tools = config.packages.rmpp_android_tools;
           bridge = config.packages.rmpp_einkbridge;
           quill = config.packages.rmpp_quill;
+        };
+
+        rmpp_chromium = rmppPkgs.callPackage ./chromium.nix {
+          inherit os;
+          quill = config.packages.rmpp_quill;
+          chromium = rmppPkgs.chromium;
         };
 
         rmpp_einkbridge = rmppPkgs.callPackage ./einkbridge.nix { inherit os; };

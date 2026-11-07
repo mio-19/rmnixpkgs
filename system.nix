@@ -20,6 +20,8 @@
   os,
   rmppAndroid ? null,
   rmppAndroidIcon ? null,
+  rmppChromium ? null,
+  rmppChromiumIcon ? null,
   ...
 }:
 let
@@ -233,6 +235,7 @@ in
 {
   options.rmpp = {
     android.enable = lib.mkEnableOption "the manual rmpp-android takeover service and AppLoad entry";
+    chromium.enable = lib.mkEnableOption "the manual rmpp-chromium browser takeover service and AppLoad entry";
     files = lib.mkOption {
       type = lib.types.attrsOf fileModule;
       default = { };
@@ -373,35 +376,67 @@ in
   };
 
   config = {
-    rmpp.packages = lib.optionals cfg.android.enable [ rmppAndroid ];
-    rmpp.systemd.services = lib.mkIf cfg.android.enable {
-      rmpp-android = {
-        description = "Waydroid e-paper takeover";
-        type = "simple";
-        execStart = "${rmppAndroid}/bin/rmpp-android run";
-        wantedBy = null; # Manual/AppLoad launch only, never take over at boot.
-        serviceConfig = ''
-          ExecStopPost=${rmppAndroid}/bin/rmpp-android recover
-          KillMode=mixed
-          SendSIGKILL=no
-          TimeoutStopSec=240
-          Delegate=yes
-        '';
-      };
-    };
-    rmpp.appload.apps = lib.mkIf cfg.android.enable {
-      rmpp-android = {
-        name = "Android";
-        application = "${rmppAndroid}/bin/rmpp-android";
-        args = [ "start" ];
-        icon = rmppAndroidIcon;
-        qtfb = false;
-      };
-    };
+    rmpp.packages =
+      lib.optionals cfg.android.enable [ rmppAndroid ]
+      ++ lib.optionals cfg.chromium.enable [ rmppChromium ];
+    rmpp.systemd.services =
+      (lib.mkIf cfg.android.enable {
+        rmpp-android = {
+          description = "Waydroid e-paper takeover";
+          type = "simple";
+          execStart = "${rmppAndroid}/bin/rmpp-android run";
+          wantedBy = null; # Manual/AppLoad launch only, never take over at boot.
+          serviceConfig = ''
+            ExecStopPost=${rmppAndroid}/bin/rmpp-android recover
+            KillMode=mixed
+            SendSIGKILL=no
+            TimeoutStopSec=240
+            Delegate=yes
+          '';
+        };
+      })
+      // (lib.mkIf cfg.chromium.enable {
+        rmpp-chromium = {
+          description = "Chromium e-paper browser takeover";
+          type = "simple";
+          execStart = "${rmppChromium}/bin/rmpp-chromium run";
+          wantedBy = null; # Manual/AppLoad launch only, never take over at boot.
+          serviceConfig = ''
+            ExecStopPost=${rmppChromium}/bin/rmpp-chromium recover
+            KillMode=mixed
+            SendSIGKILL=no
+            TimeoutStopSec=60
+            Delegate=yes
+          '';
+        };
+      });
+    rmpp.appload.apps =
+      (lib.mkIf cfg.android.enable {
+        rmpp-android = {
+          name = "Android";
+          application = "${rmppAndroid}/bin/rmpp-android";
+          args = [ "start" ];
+          icon = rmppAndroidIcon;
+          qtfb = false;
+        };
+      })
+      // (lib.mkIf cfg.chromium.enable {
+        rmpp-chromium = {
+          name = "Chromium";
+          application = "${rmppChromium}/bin/rmpp-chromium";
+          args = [ "start" ];
+          icon = rmppChromiumIcon;
+          qtfb = false;
+        };
+      });
     assertions = [
       {
         assertion = !cfg.android.enable || rmppAndroid != null;
         message = "rmpp.android.enable requires the runtime package";
+      }
+      {
+        assertion = !cfg.chromium.enable || rmppChromium != null;
+        message = "rmpp.chromium.enable requires the runtime package";
       }
       {
         assertion = lib.all safeRelativePath (lib.attrNames cfg.files);

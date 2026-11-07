@@ -14,6 +14,7 @@ are no per-component subdirectories:
 | `wpewebkit.nix`, `rmweb.nix` | browser engine and browser app, both from source |
 | `kernel.nix` | reMarkable's kernel + Waydroid needs + etnaviv GPU driver + the upstream stable (security) chain |
 | `android.nix`, `android.py` | Waydroid session: private root, compositor, container, manual `rmpp-android` takeover |
+| `chromium.nix` | Chromium browser on e-ink: binary cache Chromium + source-built CDP driver & Quill viewer |
 | `einkbridge.nix`, `einkbridge.c`, `einkbridge-wire.h`, `quill-host.c` | our Wayland screencopy → e-paper bridge and its isolated vendor-display worker |
 | `quill.nix` | Quill, from source against the OS's Qt |
 | `system.nix`, `config.nix`, `activate.sh` | declarative configuration: the module, this device's config, the activation script |
