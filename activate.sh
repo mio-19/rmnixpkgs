@@ -31,6 +31,14 @@
 # not start with rmpp-.
 set -eu
 
+# Tools from the Nix store take precedence over device BusyBox utilities.
+# When built into a generation, @extraPath@ is substituted with coreutils,
+# gnused, gnugrep, gawk from /nix/store.
+if [ -n "@extraPath@" ] && [ "@extraPath@" != "@""extraPath@" ]; then
+	PATH="@extraPath@:$PATH"
+	export PATH
+fi
+
 STATE="${RMPP_STATE:-/home/root/.rmpp}"
 PROFILE="$STATE/current"
 GCROOT=/nix/var/nix/gcroots/rmpp

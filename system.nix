@@ -485,7 +485,16 @@ in
             runHook preInstall
             mkdir -p $out/etc $out/systemd $out/appload $out/bin
 
-            install -m755 ${./activate.sh} $out/activate
+            substitute ${./activate.sh} $out/activate \
+              --subst-var-by extraPath "${
+                lib.makeBinPath [
+                  pkgs.coreutils
+                  pkgs.gnused
+                  pkgs.gnugrep
+                  pkgs.gawk
+                ]
+              }"
+            chmod 755 $out/activate
 
             # /etc files (activation installs them with the recorded mode).
             ${lib.concatStringsSep "\n" (
