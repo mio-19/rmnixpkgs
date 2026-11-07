@@ -22,6 +22,7 @@
   rmppAndroidIcon ? null,
   rmppChromium ? null,
   rmppChromiumIcon ? null,
+  rmppKernel ? null,
   ...
 }:
 let
@@ -276,6 +277,15 @@ in
       type = vellumModule;
       default = { };
       description = "Declarative vellum (apk) package list, Homebrew-module style.";
+    };
+
+    kernel.install = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Install rmpp_kernel (fitImage and kernel modules) by default onto the tablet
+        during activation, taking a backup of the stock fitImage first.
+      '';
     };
 
     # What rmpp_kernel carries on top of reMarkable's published tree. Their
@@ -546,6 +556,11 @@ in
 
             # OS-update policy: units to mask, one per line.
             ${lib.optionalString cfg.osUpdates.disable (writeLines "$out/systemd.mask" cfg.osUpdates.units)}
+
+            # Kernel build (fitImage and modules) when install is enabled.
+            ${lib.optionalString (cfg.kernel.install && rmppKernel != null) ''
+              ln -s ${rmppKernel} $out/kernel
+            ''}
 
             # What this generation was built for, readable on the device:
             #   cat /home/root/.rmpp/current/os

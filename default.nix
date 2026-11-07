@@ -43,7 +43,7 @@
       # device, evaluation produces a generation, activate.sh applies it and a
       # boot unit re-applies it because /etc is a tmpfs overlay.
       mkConfig =
-        osForConfig:
+        osForConfig: rmppKernel:
         lib.evalModules {
           modules = [
             ./system.nix
@@ -57,6 +57,7 @@
             rmppAndroidIcon = "${upstream}/device/icon.png";
             rmppChromium = config.packages.rmpp_chromium;
             rmppChromiumIcon = "${config.packages.rmpp_chromium.src}/chromium/icon.png";
+            inherit rmppKernel;
           };
         };
 
@@ -68,7 +69,7 @@
       # is the generation that gets built and activated, so `$out/os` records
       # 6.12.115 and activation compares `uname -r` against 6.12.115-waydroid
       # instead of the vendor's 6.12.49-waydroid.
-      baseConfig = mkConfig os;
+      baseConfig = mkConfig os null;
       applyStablePatches = baseConfig.config.rmpp.kernel.securityPatches.enable;
       kernelVersion =
         if applyStablePatches then
@@ -82,9 +83,9 @@
         gpuDeviceTreePatch = "${upstream}/kernel/gpu-etnaviv-dt.patch";
       };
 
-      rmppConfig =
+      rmppConfig = mkConfig (
         if applyStablePatches then
-          mkConfig (
+          (
             os
             // {
               kernel = os.kernel // {
@@ -93,7 +94,8 @@
             }
           )
         else
-          baseConfig;
+          os
+      ) rmpp_kernel;
 
       # Device-side files from
       # https://github.com/MaximeRivest/android-on-remarkable-paper-pro

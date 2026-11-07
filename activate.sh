@@ -81,11 +81,12 @@ install_file() {
 
 usage() {
 	cat <<'EOF'
-usage: activate [GENERATION] [--boot | --install-boot-unit]
+usage: activate [GENERATION] [--boot | --install-boot-unit | --rollback-kernel]
 
   GENERATION           generation to apply (default: the one holding this script)
   --boot               apply only; used by rmpp-config.service at boot
   --install-boot-unit  apply, then install rmpp-config.service into the rootfs
+  --rollback-kernel    restore stock /boot/fitImage from backup
   -h, --help           this text
 
 Everything is re-applied from the store; nothing is stored in the rootfs except
@@ -99,6 +100,7 @@ for arg in "$@"; do
 	case "$arg" in
 	--boot) mode=boot ;;
 	--install-boot-unit) mode=install-unit ;;
+	--rollback-kernel) mode=rollback-kernel ;;
 	-h | --help)
 		usage
 		exit 0
@@ -435,16 +437,177 @@ install_boot_unit() {
 	trap - EXIT HUP INT TERM
 }
 
+# --- kernel installation & rollback -----------------------------------------
+
+# Installs rmpp_kernel (fitImage + modules) onto the device if declared in the
+# generation and not already matching /boot/fitImage.
+# Safety: stock /boot/fitImage is backed up once to $STATE/backup/kernel.
+# Recovery: reMarkable Paper Pro hardware watchdog has dual rootfs slots (A/B),
+# so 3 failed boots automatically roll back to the other slot.
+# See https://github.com/MaximeRivest/android-on-remarkable-paper-pro/blob/master/kernel/install-kernel.sh
+apply_kernel() {
+	[ "$mode" = boot ] && return 0
+	[ -d "$gen/kernel" ] || return 0
+	[ -f "$gen/kernel/fitImage" ] || return 0
+
+	kernel_rel=""
+	if [ -d "$gen/kernel/lib/modules" ]; then
+		kernel_rel=$(ls "$gen/kernel/lib/modules" 2>/dev/null | head -n1 || true)
+	fi
+	if [ -z "$kernel_rel" ] && [ -f "$gen/os" ]; then
+		want_kernel=$(sed -n 's/^kernel-version=//p' "$gen/os")
+		[ -n "$want_kernel" ] && kernel_rel="$want_kernel-waydroid"
+	fi
+	[ -n "$kernel_rel" ] || return 0
+
+	if [ -f /boot/fitImage ] && cmp -s "$gen/kernel/fitImage" /boot/fitImage; then
+		if [ -d "/lib/modules/$kernel_rel" ]; then
+			log "rmpp_kernel ($kernel_rel) is already installed in /boot/fitImage"
+			return 0
+		fi
+	fi
+
+	log "installing rmpp_kernel ($kernel_rel) into /boot/fitImage..."
+
+	backup_dir="$STATE/backup/kernel"
+	mkdir -p "$backup_dir"
+	if [ ! -f "$backup_dir/fitImage.stock" ] && [ -f /boot/fitImage ]; then
+		log "backing up current /boot/fitImage to $backup_dir/fitImage.stock"
+		cp -p /boot/fitImage "$backup_dir/fitImage.stock"
+		if command -v md5sum >/dev/null 2>&1; then
+			md5sum "$backup_dir/fitImage.stock" >"$backup_dir/fitImage.stock.md5" 2>/dev/null || true
+		fi
+		uname -r >"$backup_dir/stock-release.txt" 2>/dev/null || true
+	fi
+
+	restore_k() { :; }
+	if [ -x "$VELLUM_MOUNT_RW" ]; then
+		log "using vellum's mount-rw for kernel installation"
+		"$VELLUM_MOUNT_RW" || die "vellum mount-rw failed"
+		restore_k() {
+			if [ -x "$VELLUM_MOUNT_RESTORE" ]; then
+				"$VELLUM_MOUNT_RESTORE" || warn "vellum mount-restore failed"
+			fi
+		}
+	else
+		mount -o remount,rw / || die "could not remount / read-write"
+		restore_k() { mount -o remount,ro / || warn "could not remount / read-only"; }
+	fi
+
+	if [ -d "$gen/kernel/lib/modules/$kernel_rel" ]; then
+		mkdir -p "/lib/modules/$kernel_rel"
+		cp -rpf "$gen/kernel/lib/modules/$kernel_rel/." "/lib/modules/$kernel_rel/"
+		if [ -x /home/root/.vellum/bin/depmod-noorphan ]; then
+			/home/root/.vellum/bin/depmod-noorphan "$kernel_rel" 2>/dev/null || depmod -a "$kernel_rel" 2>/dev/null || true
+		elif command -v depmod >/dev/null 2>&1; then
+			depmod -a "$kernel_rel" 2>/dev/null || true
+		fi
+	fi
+
+	cp -f "$gen/kernel/fitImage" /boot/fitImage.new
+	sync
+	mv /boot/fitImage.new /boot/fitImage
+	sync
+
+	restore_k
+	log "rmpp_kernel $kernel_rel installed successfully (reboot required to boot new kernel)"
+}
+
+rollback_kernel() {
+	backup_dir="$STATE/backup/kernel"
+	[ -f "$backup_dir/fitImage.stock" ] || die "no stock kernel backup found in $backup_dir"
+
+	log "restoring stock fitImage from $backup_dir/fitImage.stock..."
+	restore_k() { :; }
+	if [ -x "$VELLUM_MOUNT_RW" ]; then
+		"$VELLUM_MOUNT_RW" || die "vellum mount-rw failed"
+		restore_k() {
+			if [ -x "$VELLUM_MOUNT_RESTORE" ]; then
+				"$VELLUM_MOUNT_RESTORE" || warn "vellum mount-restore failed"
+			fi
+		}
+	else
+		mount -o remount,rw / || die "could not remount / read-write"
+		restore_k() { mount -o remount,ro / || warn "could not remount / read-only"; }
+	fi
+
+	cp -f "$backup_dir/fitImage.stock" /boot/fitImage.new
+	sync
+	mv /boot/fitImage.new /boot/fitImage
+	sync
+	restore_k
+	log "stock fitImage restored; reboot to apply"
+	exit 0
+}
+
+# --- vellum & xovi maintenance ----------------------------------------------
+
+# Runs post-OS-upgrade tasks and maintenance needed by Vellum and XOVI.
+apply_vellum_maintenance() {
+	[ "$mode" = boot ] && return 0
+
+	# 1. Vellum OS upgrade sync and re-enablement
+	if [ -x "$VELLUM" ]; then
+		vellum_osver=""
+		[ -f /home/root/.vellum/state/osver ] && vellum_osver=$(cat /home/root/.vellum/state/osver 2>/dev/null || true)
+		if [ -n "$have_os" ] && [ -n "$vellum_osver" ] && [ "$vellum_osver" != "$have_os" ]; then
+			log "running vellum maintenance: syncing packages with OS upgrade ($vellum_osver -> $have_os)..."
+			printf 'y\n' | "$VELLUM" upgrade 2>/dev/null || warn "vellum upgrade failed"
+			"$VELLUM" reenable 2>/dev/null || warn "vellum reenable failed"
+		elif "$VELLUM" list 2>&1 | grep -q "reenable has not been run"; then
+			log "running vellum maintenance: vellum reenable..."
+			"$VELLUM" reenable 2>/dev/null || warn "vellum reenable failed"
+		fi
+	fi
+
+	# 2. XOVI hashtable rebuild for qt-resource-rebuilder
+	xovi_rebuild="/home/root/xovi/rebuild_hashtable"
+	qrr_so="/home/root/xovi/extensions.d/qt-resource-rebuilder.so"
+	qrr_hashtab="/home/root/xovi/exthome/qt-resource-rebuilder/hashtab"
+	if [ -x "$xovi_rebuild" ] && [ -f "$qrr_so" ]; then
+		rebuild_needed=0
+		if [ ! -s "$qrr_hashtab" ]; then
+			rebuild_needed=1
+		elif [ -f /usr/bin/xochitl ] && [ /usr/bin/xochitl -nt "$qrr_hashtab" ]; then
+			rebuild_needed=1
+		elif [ -f "$STATE/hashtab-os" ] && [ "$(cat "$STATE/hashtab-os" 2>/dev/null)" != "$have_os" ]; then
+			rebuild_needed=1
+		fi
+
+		if [ "$rebuild_needed" = 1 ]; then
+			log "running vellum/xovi maintenance: rebuilding hashtable for qt-resource-rebuilder..."
+			was_running=0
+			if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet xochitl; then
+				was_running=1
+			fi
+			printf '\n' | bash "$xovi_rebuild" 2>&1 || warn "xovi/rebuild_hashtable failed"
+			if [ "$was_running" = 1 ]; then
+				if [ -x /home/root/xovi/start ]; then
+					/home/root/xovi/start 2>/dev/null || systemctl start xochitl 2>/dev/null || true
+				else
+					systemctl start xochitl 2>/dev/null || true
+				fi
+			fi
+			mkdir -p "$STATE"
+			printf '%s\n' "$have_os" >"$STATE/hashtab-os"
+		fi
+	fi
+}
+
 # --- main -----------------------------------------------------------------
+
+[ "$mode" = rollback-kernel ] && rollback_kernel
 
 log "applying generation $gen"
 check_os
 prune_old
+apply_kernel
 apply_etc
 apply_masks
 apply_units
 apply_appload
 apply_vellum
+apply_vellum_maintenance
 apply_profile
 cp "$gen/manifest" "$STATE/manifest"
 log "done (state: $STATE, profile: $PROFILE)"
