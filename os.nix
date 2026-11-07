@@ -24,7 +24,17 @@
   # care, but one built against the OS's own (the prebuilt rmweb bundle is the
   # case in point: it loads xochitl's Qt 6.10.3) has to match these.
   glibc = "2.39";
+  loader = "/lib/ld-linux-aarch64.so.1";
   qt = "6.10.3";
+  # The release's compiler, i.e. the libstdc++ a C++ library loaded into the
+  # device's own processes (Quill) has to stay compatible with. 3.28 is Yocto
+  # scarthgap, which ships GCC 13:
+  # https://docs.yoctoproject.org/migration-guides/release-notes-5.0.html
+  gcc = "13";
+  # Qt's source archive for the public headers/libraries Quill builds against.
+  # Tarball hash (not unpacked), Qt Project:
+  # https://download.qt.io/official_releases/qt/6.10/6.10.3/submodules/qtbase-everywhere-src-6.10.3.tar.xz
+  qtbaseHash = "sha256-OD3JB4FjOPDLpyCIpSTAdFjfxpzmhMqRMvzE/pHCSws=";
 
   # The kernel that ships with this release, from reMarkable's published GPL
   # source (tracked with git LFS). `branch` is the rmpp_<kernel>_v<...>.x branch

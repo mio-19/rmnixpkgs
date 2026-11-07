@@ -12,7 +12,12 @@
 { inputs }:
 {
   perSystem =
-    { pkgs, lib, ... }:
+    {
+      pkgs,
+      lib,
+      config,
+      ...
+    }:
     let
       rmppPkgs = import ./aarch64-pkgs.nix pkgs;
       upstream = inputs.android-on-remarkable-paper-pro;
@@ -48,6 +53,8 @@
             inherit lib;
             os = osForConfig;
             pkgs = rmppPkgs;
+            rmppAndroid = config.packages.rmpp_android;
+            rmppAndroidIcon = "${upstream}/device/icon.png";
           };
         };
 
@@ -103,7 +110,7 @@
         installPhase = ''
           runHook preInstall
           install -d $out/share/rmpp-android
-          cp -a kernel device chroot android README.md $out/share/rmpp-android/
+          cp -a kernel device chroot android einkbridge README.md LICENSE $out/share/rmpp-android/
           runHook postInstall
         '';
 
@@ -117,6 +124,89 @@
     in
     {
       formatter = pkgs.nixfmt;
+
+      # Run in the native aarch64-linux builder (OrbStack); none needs a tablet.
+      checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        # activate.sh ownership rules against a fake vellum CLI and AppLoad dir.
+        rmpp_activation =
+          rmppPkgs.runCommand "rmpp-activation-check"
+            {
+              nativeBuildInputs = [ rmppPkgs.python3 ];
+              src = lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [
+                  ./activate.sh
+                  ./test-activation.py
+                ];
+              };
+            }
+            ''
+              python3 $src/test-activation.py 2>&1 | tee $out
+            '';
+        rmpp_android_controller =
+          rmppPkgs.runCommand "rmpp-android-controller-check"
+            {
+              nativeBuildInputs = [ rmppPkgs.python3 ];
+              src = lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [
+                  ./android.py
+                  ./test-android.py
+                ];
+              };
+            }
+            ''
+              python3 $src/test-android.py 2>&1 | tee $out
+            '';
+        rmpp_quill_boundary =
+          rmppPkgs.runCommandCC "rmpp-quill-boundary-check"
+            {
+              nativeBuildInputs = [
+                rmppPkgs.pkg-config
+                rmppPkgs.python3
+              ];
+              buildInputs = [ config.packages.rmpp_quill.qtbase ];
+            }
+            ''
+              $CXX -fPIC -shared ${./test-quill-vendor.cpp} $(pkg-config --cflags --libs Qt6Core Qt6Gui) -o vendor.so
+              TEST_REAL_QUILL=1 LD_LIBRARY_PATH=${
+                lib.makeLibraryPath [
+                  config.packages.rmpp_quill.qtbase
+                  rmppPkgs.stdenv.cc.cc.lib
+                ]
+              } \
+                python3 ${./test-quill-host.py} ${rmppPkgs.glibc}/lib/ld-linux-aarch64.so.1 \
+                  ${config.packages.rmpp_einkbridge}/libexec/rmpp-quill-host "$PWD/vendor.so" \
+                  ${config.packages.rmpp_quill}/lib/libquill.so > $out
+            '';
+        rmpp_einkbridge_session =
+          rmppPkgs.runCommand "rmpp-einkbridge-session-check"
+            {
+              nativeBuildInputs = [
+                rmppPkgs.python3
+                rmppPkgs.swaybg
+              ];
+            }
+            ''
+              sh ${./test-einkbridge-session.sh} ${config.packages.rmpp_android_tools} ${config.packages.rmpp_einkbridge} > $out
+            '';
+        # Validate the actual kernel output; successful compilation alone does
+        # not prove that olddefconfig retained Android's required settings.
+        rmpp_waydroid_kernel =
+          rmppPkgs.runCommand "rmpp-waydroid-kernel-check"
+            {
+              nativeBuildInputs = [
+                rmppPkgs.python3
+                rmppPkgs.dtc
+              ];
+            }
+            ''
+              python3 ${./check-waydroid-kernel.py} ${upstream}/kernel/waydroid.cfg ${rmpp_kernel} > $out
+            '';
+        rmpp_waydroid_runtime = rmppPkgs.runCommand "rmpp-waydroid-runtime-check" { } ''
+          sh ${./check-waydroid-runtime.sh} ${config.packages.rmpp_android_tools} > $out
+        '';
+      };
 
       packages = {
         # Device-side helper for a persistent Nix store at /nix, bind mounted
@@ -221,20 +311,33 @@
 
         # The Waydroid runtime adapted from
         # https://github.com/MaximeRivest/android-on-remarkable-paper-pro:
-        # Waydroid plus the headless wlroots compositor it renders into, all
+        # Waydroid plus the headless compositor it renders into, all
         # nixpkgs aarch64-linux packages that cache.nixos.org already serves
         # (no SDK, no cross compiler), with upstream's device files alongside.
         # Mesa is here for the tablet's Vivante GPU, which only works once
         # rmpp_kernel (kernel.nix) is installed.
-        # nix build .#rmpp_android -o rmpp-android
-        # nix copy --to 'ssh://root@10.11.99.1?remote-program=/nix/var/nix/profiles/default/bin/nix-store' ./rmpp-android
-        rmpp_android = pkgs.buildEnv {
-          name = "rmpp-android";
+        # rmpp_android below layers the session controller and bridge on it.
+        rmpp_android_tools = pkgs.buildEnv {
+          name = "rmpp-android-tools";
           paths =
             (with rmppPkgs; [
               waydroid
               labwc
-              wlroots
+              # labwc already links its matching wlroots from the closure.
+              # Direct tools used by upstream device/session.sh and enter.sh:
+              # https://github.com/MaximeRivest/android-on-remarkable-paper-pro/tree/65b5bf34fb3ef160e3d483a14484b46304ecbc7c/device
+              seatd
+              wlr-randr
+              dbus
+              bash
+              coreutils
+              util-linux
+              procps
+              iproute2
+              iptables
+              dnsmasq
+              kmod
+              lxc
               wayland-utils
               mesa
             ])
@@ -247,12 +350,30 @@
             "/share"
           ];
           meta = {
-            description = "Waydroid + headless wlroots runtime for the reMarkable Paper Pro";
+            description = "Waydroid, compositor and container tools used by rmpp_android";
             homepage = "https://github.com/MaximeRivest/android-on-remarkable-paper-pro";
             license = lib.licenses.mit;
             platforms = lib.platforms.all;
           };
         };
+
+        # The original einkbridge Rust entry points are absent from the pinned
+        # upstream (and its forks), see
+        # https://github.com/MaximeRivest/android-on-remarkable-paper-pro/issues/1
+        # Our replacement bridge/session implementation is in einkbridge.c
+        # and android.py; upstream scripts remain reference material only.
+        # nix build .#rmpp_android -o rmpp-android
+        # nix copy --to 'ssh://root@10.11.99.1?remote-program=/nix/var/nix/profiles/default/bin/nix-store' ./rmpp-android
+        rmpp_android = rmppPkgs.callPackage ./android.nix {
+          inherit os kernelVersion;
+          tools = config.packages.rmpp_android_tools;
+          bridge = config.packages.rmpp_einkbridge;
+          quill = config.packages.rmpp_quill;
+        };
+
+        rmpp_einkbridge = rmppPkgs.callPackage ./einkbridge.nix { inherit os; };
+
+        rmpp_quill = rmppPkgs.callPackage ./quill.nix { inherit os; };
 
         # Upstream's device files on their own, for reference or a hand-built
         # install: kernel fragment, GPU DT patch, scripts, units, theme.

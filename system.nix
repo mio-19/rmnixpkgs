@@ -18,6 +18,8 @@
   pkgs,
   config,
   os,
+  rmppAndroid ? null,
+  rmppAndroidIcon ? null,
   ...
 }:
 let
@@ -63,7 +65,7 @@ let
         default = [ "home.mount" ];
       };
       wantedBy = lib.mkOption {
-        type = lib.types.str;
+        type = lib.types.nullOr lib.types.str;
         default = "multi-user.target";
       };
       serviceConfig = lib.mkOption {
@@ -178,8 +180,10 @@ let
       ExecStart=${value.execStart}
       ${value.serviceConfig}
 
-      [Install]
-      WantedBy=${value.wantedBy}
+      ${lib.optionalString (value.wantedBy != null) ''
+        [Install]
+        WantedBy=${value.wantedBy}
+      ''}
     '';
 
   appManifest =
@@ -205,13 +209,14 @@ let
   ownedPaths =
     lib.mapAttrsToList (n: _: "/etc/${n}") cfg.files
     ++ lib.mapAttrsToList (n: _: "/etc/systemd/system/${n}.service") cfg.systemd.services
-    ++ lib.mapAttrsToList (
-      n: v: "/etc/systemd/system/${v.wantedBy}.wants/${n}.service"
-    ) cfg.systemd.services
+    ++ lib.mapAttrsToList (n: v: "/etc/systemd/system/${v.wantedBy}.wants/${n}.service") (
+      lib.filterAttrs (_: v: v.wantedBy != null) cfg.systemd.services
+    )
     ++ lib.mapAttrsToList (n: _: "/home/root/xovi/exthome/appload/${n}/") cfg.appload.apps
     ++ lib.optionals cfg.osUpdates.disable (map (u: "/etc/systemd/system/${u}") cfg.osUpdates.units);
 
-  safeName = n: builtins.match "[A-Za-z0-9._-]+" n != null;
+  safeName = n: builtins.match "[A-Za-z0-9._-]+" n != null && n != "." && n != "..";
+  safeRelativePath = n: lib.all safeName (lib.splitString "/" n);
 
   # `assertions` is a NixOS module convention; evalModules has no such option,
   # so it is declared below and enforced at evaluation time.
@@ -227,6 +232,7 @@ let
 in
 {
   options.rmpp = {
+    android.enable = lib.mkEnableOption "the manual rmpp-android takeover service and AppLoad entry";
     files = lib.mkOption {
       type = lib.types.attrsOf fileModule;
       default = { };
@@ -367,9 +373,52 @@ in
   };
 
   config = {
+    rmpp.packages = lib.optionals cfg.android.enable [ rmppAndroid ];
+    rmpp.systemd.services = lib.mkIf cfg.android.enable {
+      rmpp-android = {
+        description = "Waydroid e-paper takeover";
+        type = "simple";
+        execStart = "${rmppAndroid}/bin/rmpp-android run";
+        wantedBy = null; # Manual/AppLoad launch only, never take over at boot.
+        serviceConfig = ''
+          ExecStopPost=${rmppAndroid}/bin/rmpp-android recover
+          KillMode=mixed
+          SendSIGKILL=no
+          TimeoutStopSec=240
+          Delegate=yes
+        '';
+      };
+    };
+    rmpp.appload.apps = lib.mkIf cfg.android.enable {
+      rmpp-android = {
+        name = "Android";
+        application = "${rmppAndroid}/bin/rmpp-android";
+        args = [ "start" ];
+        icon = rmppAndroidIcon;
+        qtfb = false;
+      };
+    };
     assertions = [
       {
-        assertion = lib.all (n: lib.hasPrefix "rmpp-" n) (lib.attrNames cfg.systemd.services);
+        assertion = !cfg.android.enable || rmppAndroid != null;
+        message = "rmpp.android.enable requires the runtime package";
+      }
+      {
+        assertion = lib.all safeRelativePath (lib.attrNames cfg.files);
+        message = "rmpp.files: expected relative paths without empty, dot or parent components";
+      }
+      {
+        assertion = lib.all (v: builtins.match "[0-7]{3,4}" v.mode != null) (lib.attrValues cfg.files);
+        message = "rmpp.files: modes must be three or four octal digits";
+      }
+      {
+        assertion = lib.all (v: v.wantedBy == null || safeName v.wantedBy) (
+          lib.attrValues cfg.systemd.services
+        );
+        message = "rmpp.systemd.services: wantedBy must be a unit name without path components";
+      }
+      {
+        assertion = lib.all (n: safeName n && lib.hasPrefix "rmpp-" n) (lib.attrNames cfg.systemd.services);
         message = "rmpp.systemd.services: unit names must start with `rmpp-` (that is how this layer avoids fighting XOVI/vellum units)";
       }
       {
@@ -395,6 +444,7 @@ in
           version = "1";
 
           dontUnpack = true;
+          dontPatchShebangs = true;
 
           installPhase = ''
             runHook preInstall
@@ -415,7 +465,9 @@ in
               ) cfg.systemd.services
             )}
             ${writeLines "$out/systemd.enable" (
-              lib.mapAttrsToList (n: v: "${v.wantedBy}.wants ${n}.service") cfg.systemd.services
+              lib.mapAttrsToList (n: v: "${v.wantedBy}.wants ${n}.service") (
+                lib.filterAttrs (_: v: v.wantedBy != null) cfg.systemd.services
+              )
             )}
 
             # AppLoad entries, each marked as ours so activation can tell them

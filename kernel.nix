@@ -182,7 +182,7 @@ stdenv.mkDerivation (finalAttrs: {
       # shipped with the build rather than pretending it applied or refusing to
       # build at all. `rmpp.kernel.securityPatches.enable = false` in config.nix
       # builds the vendor tree exactly as published.
-      mkdir -p "$TMPDIR/stable"
+      mkdir -p "$TMPDIR/stable/logs" "$TMPDIR/stable/rejected-hunks"
       : > "$TMPDIR/stable/report"
       : > "$TMPDIR/stable/rejects"
       n_clean=0
@@ -192,6 +192,7 @@ stdenv.mkDerivation (finalAttrs: {
         patch_name=$(basename "$patch_file" .xz)
         xz -dc "$patch_file" > "$TMPDIR/stable/one.patch"
         patch -p1 --batch --forward --fuzz=2 < "$TMPDIR/stable/one.patch" > "$TMPDIR/stable/log" 2>&1 || true
+        cp "$TMPDIR/stable/log" "$TMPDIR/stable/logs/$patch_name.log"
         rejected_files=$(find . -name '*.rej' | sort)
         if [ -z "$rejected_files" ] && ! grep -qE 'FAILED|can.t find file to patch' "$TMPDIR/stable/log"; then
           n_clean=$((n_clean + 1))
@@ -200,7 +201,9 @@ stdenv.mkDerivation (finalAttrs: {
           n_partial=$((n_partial + 1))
           printf 'partial  %s\n' "$patch_name" >> "$TMPDIR/stable/report"
           for rejected in $rejected_files; do
-            n_rejected=$((n_rejected + 1))
+            hunks=$(grep -c '^@@' "$rejected" || true)
+            n_rejected=$((n_rejected + hunks))
+            install -Dm644 "$rejected" "$TMPDIR/stable/rejected-hunks/$patch_name/$rejected"
             printf '         rejected %s\n' "$rejected" >> "$TMPDIR/stable/report"
             printf '%s %s\n' "$patch_name" "$rejected" >> "$TMPDIR/stable/rejects"
           done
@@ -239,7 +242,7 @@ stdenv.mkDerivation (finalAttrs: {
       ${lib.optionalString (builtins.pathExists ./kernel-vendor-fcontext-fixup.patch) ''
         patch -p1 < ${./kernel-vendor-fcontext-fixup.patch}
         printf 'vendor-context-fixup %s\n' 'kernel-vendor-fcontext-fixup.patch' >> "$TMPDIR/stable/report"
-      '}
+      ''}
 
       # The one rejected hunk that is not merely a missing driver fix: without
       # it io.h calls __ioremap_prot() undeclared and nothing compiles. Must
@@ -265,6 +268,9 @@ stdenv.mkDerivation (finalAttrs: {
            END { if (buf ~ /syscore_ops/) printf "%s", buf }' \
         "$TMPDIR/stable/114.patch" > "$TMPDIR/stable/114-syscore.patch"
       patch -R -p1 --batch --forward < "$TMPDIR/stable/114-syscore.patch" > "$TMPDIR/stable/syscore-revert.log" 2>&1 || true
+      # Preserve reverse-patch failures separately from the forward-chain rejects.
+      find . -name '*.rej' -exec cp --parents -t "$TMPDIR/stable/rejected-hunks" {} +
+      find . -name '*.rej' -delete
       printf 'reverted %s\n' 'syscore API rework (patch-6.12.113-114)' >> "$TMPDIR/stable/report"
 
       # The chain converted gpio-mxc to bitops but its struct hunk (both_edges
@@ -350,6 +356,8 @@ stdenv.mkDerivation (finalAttrs: {
       # not (so a missing security fix is visible on the device, not implied).
       install -Dm644 "$TMPDIR/stable/report" $out/share/rmpp-kernel/security-patches
       install -Dm644 "$TMPDIR/stable/rejects" $out/share/rmpp-kernel/security-patch-rejects
+      cp -a "$TMPDIR/stable/logs" "$TMPDIR/stable/rejected-hunks" $out/share/rmpp-kernel/
+      install -Dm644 "$TMPDIR/stable/syscore-revert.log" $out/share/rmpp-kernel/syscore-revert.log
       install -Dm644 ${ioHeaderBackport} $out/share/rmpp-kernel/ioremap-prot-backport.patch
       install -Dm644 ${gpioBackports} $out/share/rmpp-kernel/gpio-mxc-backports.patch
       install -Dm644 ${iw61xMonitorChannel} $out/share/rmpp-kernel/iw61x-monitor-channel.patch
@@ -363,7 +371,7 @@ stdenv.mkDerivation (finalAttrs: {
       install -Dm644 "$TMPDIR/stable/114-syscore.patch" $out/share/rmpp-kernel/syscore-revert.patch
       ${lib.optionalString (builtins.pathExists ./kernel-vendor-fcontext-fixup.patch) ''
         install -Dm644 ${./kernel-vendor-fcontext-fixup.patch} $out/share/rmpp-kernel/vendor-fcontext-fixup.patch
-      '}
+      ''}
     ''}
 
     runHook postInstall

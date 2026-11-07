@@ -171,7 +171,9 @@ persist_mount_unit() {
 [Unit]
 Description=Persistent Nix store ($STORE_DIR on /nix)
 Requires=home.mount
-After=home.mount local-fs.target
+After=home.mount
+# Local mounts already precede local-fs.target; ordering after it creates a cycle.
+# https://www.freedesktop.org/software/systemd/man/latest/systemd.mount.html
 
 [Mount]
 What=$STORE_DIR

@@ -9,12 +9,16 @@ are no per-component subdirectories:
 | Path | What |
 | --- | --- |
 | `flake.nix`, `default.nix` | flake entry point, and one module defining every package |
-| `os.nix` | the target reMarkable OS release: kernel source pin + stable patch chain, glibc/Qt ABI |
+| `os.nix` | the target reMarkable OS release: kernel source pin + stable patch chain, glibc/GCC/Qt ABI |
 | `aarch64-pkgs.nix` | the native aarch64-linux package set (cache.nixos.org trick) |
 | `wpewebkit.nix`, `rmweb.nix` | browser engine and browser app, both from source |
 | `kernel.nix` | reMarkable's kernel + Waydroid needs + etnaviv GPU driver + the upstream stable (security) chain |
+| `android.nix`, `android.py` | Waydroid session: private root, compositor, container, manual `rmpp-android` takeover |
+| `einkbridge.nix`, `einkbridge.c`, `einkbridge-wire.h`, `quill-host.c` | our Wayland screencopy → e-paper bridge and its isolated vendor-display worker |
+| `quill.nix` | Quill, from source against the OS's Qt |
 | `system.nix`, `config.nix`, `activate.sh` | declarative configuration: the module, this device's config, the activation script |
 | `nix-setup.sh` | device-side persistent-store setup script |
+| `test-*`, `check-waydroid-*` | flake checks (`nix flake check` on the aarch64 builder); never installed on the tablet |
 | `remarkable-paper-pro.md`, `TODO.md` | device notes; verified facts and open work |
 
 ## Provenance: keep the original link
@@ -79,8 +83,7 @@ credit `https://github.com/exp78/rmweb` and `https://wpewebkit.org/releases/`.
 ## Verification
 
 - Before claiming a package works, at minimum
-  `nix eval .#packages.x86_64-linux.<name>.drvPath` (needs
-  `--option extra-platforms aarch64-linux`, or `--accept-flake-config`).
+  `nix eval .#packages.aarch64-linux.<name>.drvPath`.
 - A build that was not run is reported as not run. Say "instantiates" when it
   only instantiates.
 - Long or unusual builds (WPE WebKit, the kernel) go in `TODO.md` rather than

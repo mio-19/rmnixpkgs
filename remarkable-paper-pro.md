@@ -197,18 +197,69 @@ headless wlroots compositor renders into the panel through their `einkbridge`
 (quill) and feeds pen/touch back, with a sidebar button in reMarkable's own UI
 to switch.
 
-Adapted means: their build tooling is dropped and their *runtime* is a normal
-nix closure. `waydroid`, `labwc`, `wlroots` and `mesa` (etnaviv for the Vante
-GC600) are nixpkgs `aarch64-linux` packages, so they substitute from
-`cache.nixos.org`; their device-side files — the `waydroid.cfg` kernel fragment,
-the GPU device-tree patch, the session/takeover scripts, the systemd units and
-the Android e-ink theme — ship verbatim from the pinned flake input.
+The missing upstream Rust sources have been replaced with a local C bridge
+(`einkbridge.c`) and a Python session controller (`android.py`), both shipped
+in `rmpp_android`. This implementation builds and passes headless/ABI tests in
+OrbStack; it has **not booted Android or driven the panel on a tablet yet**.
+
+The capture process uses wlr-screencopy v3 with SHM buffers, scales to the
+panel dimensions, applies grayscale/Bayer dithering, and sends only changed
+rectangles to a separate Quill worker. The worker uses the stock dynamic
+loader/libc and device Qt, with Quill compiled from source using the exact Qt
+version in `os.nix`. Quill loads before Qt/the vendor library, as required by
+its QImage constructor interposition. The vendor `libqsgepaper.so` is loaded
+from the tablet, never copied into our packages. `doctor` checks OS/kernel/GPU
+and loads that boundary without calling `quill_init`.
+
+The controller creates a persistent, manifest-owned root under
+`/home/root/.rmpp/android/rootfs`. A private mount namespace, `pivot_root`,
+private `/dev`, private D-Bus and the existing Nix store replace the Debian
+chroot. It initializes Waydroid images and GBM properties, then manages seatd,
+labwc, the container/session and the bridge. Physical touch/pen input travels
+through labwc's libinput/Wayland seat, rather than being reduced to mouse
+clicks by the bridge. Multi-touch, pen pressure, orientation and device input
+calibration still require tablet testing.
+
+`rmpp.android.enable = true` in `config.nix` installs our **manual-only**
+`rmpp-android.service`, PATH entry and `rmpp-android` AppLoad tile. It does not
+start Android at boot, edit XOVI extensions/QML, or replace a foreign `android`
+entry. `rmpp-android start` detaches through systemd before stopping xochitl.
+Airplane Mode or `rmpp-android stop` closes the bridge first, tears down
+Android, then restores xochitl and releases the wake lock. A stuck worker is
+not SIGKILLed: recovery refuses to restart xochitl over live owned processes.
+Logs are in the service journal and `/home/root/.rmpp/android/session.log`.
 
 ```sh
+# Linux build host (OrbStack nixos is the verified aarch64 builder):
 nix build .#rmpp_android -o rmpp-android
-nix copy --to 'ssh://root@10.11.99.1?remote-program=/nix/var/nix/profiles/default/bin/nix-store' ./rmpp-android
-# upstream's files for a hand-built install (kernel fragment, DT patch, scripts)
-nix build .#rmpp_android_files -o rmpp-android-files
+nix build .#rmpp_config -o rmpp-config
+nix copy --to 'ssh://root@10.11.99.1?remote-program=/nix/var/nix/profiles/default/bin/nix-store' ./rmpp-android ./rmpp-config
+# On the tablet, activate the copied generation using its printed store path:
+/nix/store/<generation>-rmpp-config-1/activate
+# Use the complete command path before starting a new login shell:
+/home/root/.rmpp/current/bin/rmpp-android doctor
+/home/root/.rmpp/current/bin/rmpp-android init -s VANILLA  # or -s GAPPS
+/home/root/.rmpp/current/bin/rmpp-android start
+/home/root/.rmpp/current/bin/rmpp-android status
+/home/root/.rmpp/current/bin/rmpp-android stop
+```
+
+Install and boot `rmpp_kernel` first, using the backup and A/B fallback
+procedure below. `init` fetches the selected Android images from Waydroid's
+OTA service at runtime; these images are not source-built or pinned by the
+flake. Rebuilding the complete AOSP/LineageOS image is separate work.
+`activate --install-boot-unit` is still needed to reapply our service/AppLoad
+entry at subsequent boots; the Android takeover itself remains manual.
+
+The original missing-source investigation is recorded in `TODO.md` and the
+[upstream issue](https://github.com/MaximeRivest/android-on-remarkable-paper-pro/issues/1).
+`rmpp_android_files` retains the unmodified upstream scripts as reference;
+do not use their installers for this implementation, since they install
+non-`rmpp-*` units and overwrite foreign paths.
+
+```sh
+# Runs unit, compositor, Quill-boundary and kernel checks on the native VM:
+nix flake check --accept-flake-config
 ```
 
 #### Custom kernel (Android requirements + the Vivante GPU)
@@ -271,23 +322,26 @@ The chain goes in with GNU `patch` (`--forward`, so a fix the vendor tree
 already carries is skipped rather than reversed; `--fuzz=2` for line drift), best
 effort by design: reMarkable's tree is an NXP release, so upstream context has
 drifted in the files they changed. Measured on the real tree: **25 of the 66
-patches apply cleanly, 41 partially, 100 hunks find no matching context** —
+patches apply cleanly, 41 partially, 163 hunks across 100 rejected files find no matching context** —
 mostly `imx8-isi`, Freescale networking (`enetc`, `dpaa2`), `fsl-edma`,
 `gpio-mxc`, `pmdomain/imx` and i.MX device trees, plus a few core files
 (`arch/arm64/include/asm/io.h`, `phylink.c`, `spi-imx.c`). Nothing is dropped
 silently: the build prints the summary, and the output carries
 `share/rmpp-kernel/security-patches` (per patch) and
-`share/rmpp-kernel/security-patch-rejects` (every hunk that did not apply).
+`share/rmpp-kernel/security-patch-rejects` (rejected file list),
+`rejected-hunks/` (the actual rejected diffs) and `logs/` (per-level logs).
+This count is measured before the eight explicit ports and syscore reversal.
 The partial applications **do** compile: this tree is the build-time chain
 application (the derivation that runs GNU `patch` for all 66 levels, then
 carries eight small ports and builds the derived syscore-revert), and the
 result is the `/nix/store/rd8z2cbs4fgr12sykcgvpkmq7kcg2waa-rmpp-kernel-6.12.115`
-closure. The 100 rejects remain what they were — the build would be lying if it
-claimed otherwise — and chasing them is the next item, not a precondition.
+historical closure. Audit raw rejects against the explicit ports before
+classifying a fix as missing; compilation alone does not establish that all
+security fixes landed.
 
 Two limits worth stating: the pinned tarball is the **3.27.x** branch
 (`linux-imx-rel-5.7-wd-3.27.2.1-f21cbcc9ed9a`, base 6.12.49), so on a newer OS
-point `kernel.nix` at the matching branch tarball from
+point `os.nix` at the matching branch tarball from
 [reMarkable/linux-imx-rm](https://github.com/reMarkable/linux-imx-rm); and every
 reMarkable OS update replaces the rootfs slot, so the kernel has to be
 reinstalled afterwards.

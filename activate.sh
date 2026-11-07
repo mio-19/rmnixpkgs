@@ -138,7 +138,7 @@ check_os() {
 # directories this layer is allowed to manage, or an AppLoad entry that is not
 # marked as ours, is left untouched.
 remove_owned() {
-	path=$1
+	path=${1%/}
 	case "$path" in
 	/etc/* | /home/root/xovi/exthome/appload/*) ;;
 	*)
@@ -237,16 +237,17 @@ apply_appload() {
 		app=$(basename "$src")
 		target="$APPDIR/$app"
 
-		if [ -e "$target" ] && [ ! -f "$target/$MARKER" ]; then
+		if { [ -e "$target" ] || [ -L "$target" ]; } &&
+			{ [ -L "$target" ] || [ ! -f "$target/$MARKER" ]; }; then
 			warn "skipping AppLoad entry '$app': already exists and was not created by rmpp-config (vellum or a hand install owns it)"
 			continue
 		fi
 
 		mkdir -p "$APPDIR"
-		rm -rf "$target.tmp"
-		cp -a "$src" "$target.tmp"
+		stage=$(mktemp -d "$APPDIR/.rmpp-stage.XXXXXX")
+		cp -a "$src". "$stage/"
 		rm -rf "$target"
-		mv "$target.tmp" "$target"
+		mv "$stage" "$target"
 		log "installed AppLoad entry $app"
 	done
 }
@@ -261,6 +262,7 @@ apply_appload() {
 #     offline tablet still needs its units and AppLoad entries.
 apply_vellum() {
 	[ -f "$gen/vellum.packages" ] || return 0
+	mkdir -p "$STATE"
 
 	auto_update=0
 	cleanup=0
@@ -282,23 +284,38 @@ apply_vellum() {
 		"$VELLUM" update || warn "vellum update failed (offline?)"
 	fi
 
-	managed=""
+	# Keep ownership across activations, including while cleanup is disabled.
+	managed=$(cat "$VELLUM_STATE" 2>/dev/null || true)
 	while IFS= read -r pkg; do
 		[ -n "$pkg" ] || continue
-		"$VELLUM" add "$pkg" || warn "vellum add $pkg failed"
-		managed="$managed $pkg"
+		name=$(printf '%s' "$pkg" | sed 's/[@=<>~].*//')
+		# Never claim a pre-existing package, and do not guess if the DB is unreadable.
+		was_installed=1
+		if [ -r "$VELLUM_DB" ] && ! grep -qxF "P:$name" "$VELLUM_DB"; then
+			was_installed=0
+		fi
+		if "$VELLUM" add "$pkg"; then
+			if [ "$was_installed" = 0 ] && grep -qxF "P:$name" "$VELLUM_DB"; then
+				managed="$managed $name"
+			fi
+		else
+			warn "vellum add $pkg failed"
+		fi
 	done <"$gen/vellum.packages"
 
-	if [ "$cleanup" = 1 ] && [ -f "$VELLUM_STATE" ]; then
-		while IFS= read -r old; do
-			[ -n "$old" ] || continue
-			case " $managed " in
-			*" $old "*) continue ;;
-			esac
+	retained=""
+	for old in $managed; do
+		[ -n "$old" ] || continue
+		if [ "$cleanup" = 1 ] && ! sed 's/[@=<>~].*//' "$gen/vellum.packages" | grep -qxF "$old"; then
 			log "vellum del $old (no longer declared)"
-			"$VELLUM" del "$old" || warn "vellum del $old failed"
-		done <"$VELLUM_STATE"
-	fi
+			if "$VELLUM" del "$old"; then
+				continue
+			fi
+			warn "vellum del $old failed"
+		fi
+		retained="$retained $old"
+	done
+	managed=$retained
 
 	# Verify what the list claims instead of trusting `vellum add`: it is
 	# best-effort above (an offline boot fails it), so an activation that only
@@ -326,7 +343,7 @@ apply_vellum() {
 
 	# Intentional word splitting: $managed is a space-separated list.
 	# shellcheck disable=SC2086
-	printf '%s\n' $managed >"$VELLUM_STATE"
+	printf '%s\n' $managed | sort -u >"$VELLUM_STATE"
 }
 
 apply_profile() {

@@ -11,9 +11,146 @@ real aarch64 hardware (OrbStack `nixos` VM) — `.#rmpp_tools`,
 `.#rmpp_nix_setup`, `.#rmpp_config`, `.#rmpp_android`, `.#rmpp_android_files`,
 `.#rmpp_rmweb_prebuilt`, `.#rmpp_rmweb` (engine and app from source) and
 `.#rmpp_kernel`, the last one both as the published vendor tree and as
-6.12.115-waydroid with the whole stable chain (now the default). Nothing has
+6.12.115-waydroid with the stable chain enabled explicitly (config.nix defaults
+to the vendor 6.12.49-waydroid kernel). Nothing has
 run on the tablet yet, and `rmpp_rmweb` has never rendered a frame (the display
 path below is still open).
+
+## Local Waydroid implementation (2026-11-07)
+
+The earlier audit below describes the initial missing integration. It has now
+been implemented locally; tablet hardware validation remains open.
+
+- `einkbridge.c` independently implements wlr-screencopy v3/SHM, padded-stride
+  RGB/BGR handling, Y inversion, nearest-neighbor scaling, grayscale/Bayer
+  dithering, pixel-difference dirty rectangles, a PGM test backend, and a local
+  worker IPC backend. It is C, not a reconstruction of the missing Rust files.
+- `quill-host.c` isolates the vendor display stack. It uses the system loader
+  from `os.nix`, checks the pinned Qt version, and loads Quill before Qt/vendor
+  so constructor observation and RTLD_NEXT resolution work. The worker validates
+  rectangle bounds and converts dirty grayscale rows into Quill's RGB32 buffer.
+- `quill.nix` builds upstream Quill commit
+  `39262ee0bef69915e3ead3ac218d5973916f422a` with GCC 13 and matching public Qt
+  headers/libraries compiled from the official source archive pinned in
+  `os.nix`. Qt 6.10.3 was freshly compiled in OrbStack (2147 build steps).
+  Quill's runtime RPATH is `/usr/lib`: the worker loads device libraries,
+  not the source-built Nix Qt. No proprietary library is redistributed.
+  Both worker and Quill builds reject direct GLIBC symbol requirements newer
+  than `os.glibc`; loading with RTLD_NOW checks the remaining runtime symbols.
+- `android.py` replaces the Debian bootstrap: manifest-owned persistent root,
+  private mount namespace and `/dev`, pivot_root, Nix-store bind, D-Bus/gbinder,
+  runtime image initialization, GBM configuration, seatd/labwc, Waydroid
+  container/session and a tracked bridge. libinput supplies physical input
+  through Wayland. Airplane Mode exits after Android boot completes.
+- `rmpp.android.enable` installs a manual-only `rmpp-android.service`, PATH
+  tools and an owned `rmpp-android` AppLoad tile. No sidebar QML patch or
+  upstream installer is applied. The service never starts Android at boot.
+  Cleanup waits for bridge shutdown before namespace teardown and xochitl
+  restart. Tagged live descendants block recovery; SendSIGKILL=no preserves
+  the opportunity for vendor display teardown.
+- Verified in OrbStack: sanitizer frame/damage tests; worker ABI/bounds tests;
+  real source-built Quill initialization and swaps against a fake vendor using
+  matching Qt (validates QImage interposition); white/black frame capture from
+  real labwc and clean SIGTERM; seven controller tests; private pivot_root
+  namespace with Waydroid --version and a private D-Bus GetId round trip.
+- Reproduce builds: `nix build --accept-flake-config .#rmpp_android .#rmpp_config`.
+  Checks: `nix flake check --accept-flake-config` in the aarch64 OrbStack VM.
+  The long Qt compile is necessary to build the public boundary against the
+  pinned ABI; unrelated caches/toolchains have not been replaced.
+- Still to verify on the tablet: actual vendor loading and panel selection,
+  safe handoff/recovery, LXC/cgroups/Binder and networking, image boot, etnaviv
+  rendering, touch/pen orientation and pressure, memory use and suspend.
+  `rmpp-android doctor` is a prerequisite check, not proof of panel operation.
+  Android OTA images are runtime downloads, not source-built or pinned here.
+
+## Review verification (2026-11-07)
+
+- Fixed kernel Nix string delimiters and removed the comment-only optional
+  vendor fixup that made the stable-chain build fail with "Only garbage was
+  found in the patch input".
+- Fixed activation ownership: foreign/dangling AppLoad symlinks and foreign
+  `<app>.tmp` entries survive; vellum records only successful new installs,
+  retains ownership with cleanup off, and retries failed removals. First
+  activation creates its state directory before writing the vellum ledger.
+- Kept the generated activation shebang at `#!/bin/sh`; rejected traversal,
+  shell metacharacters and invalid modes in managed paths at module evaluation.
+- Removed the Nix mount's ordering after `local-fs.target`, which conflicts
+  with local mounts' default ordering before that target.
+- `python3 test-activation.py`: three regression tests pass on macOS and
+  OrbStack. `sh -n` and ShellCheck at warning severity pass for both shell
+  scripts; `systemd-analyze verify` accepts the Nix mount unit. Eight module
+  evaluation checks pass (valid config, seven malformed config rejections).
+- In OrbStack `nixos`, all eight default packages build with:
+  `nix --extra-experimental-features "nix-command flakes" build --accept-flake-config --no-link --print-out-paths --cores 6 .#rmpp_tools .#rmpp_nix_setup .#rmpp_android_files .#rmpp_android .#rmpp_rmweb_prebuilt .#rmpp_rmweb .#rmpp_kernel .#rmpp_config`.
+  Setup and configuration were rebuilt; other outputs were already in the VM
+  store. This was not a fresh WebKit compilation. All eight
+  `packages.x86_64-linux.<name>.drvPath` attributes also instantiate.
+- Kernel audit now counts actual `@@` reject hunks: **163 across 100 files**,
+  with 25 clean and 41 partial patches. It retains per-level `.rej` contents,
+  patch logs and syscore reversal logs under `share/rmpp-kernel/`.
+- Fresh opt-in stable kernel compilation succeeded at
+  `/nix/store/jl63m7dm4hmf2ixix33r3myz2y4qw7ff-rmpp-kernel-6.12.115`.
+  Verified `fitImage`, `Image`, modules for `6.12.115-waydroid`, four Ferrari
+  device trees, `CONFIG_DRM_ETNAVIV=m`, `CONFIG_DRM_SCHED=m`, 66 patch logs,
+  100 per-level reject files containing 163 hunks, and the syscore reversal log.
+  To reproduce through the flake, set
+  `rmpp.kernel.securityPatches.enable = true` in `config.nix`, then run
+  `orb -m nixos bash -lc 'cd ~/rmnixpkgs-review && nix --extra-experimental-features "nix-command flakes" build --accept-flake-config --cores 6 -L .#rmpp_kernel'`
+  after syncing the checkout. Check those same artifacts and audit the raw
+  rejects against the explicit ports; a successful build does not prove every
+  security fix applied. The review built this variant with `callPackage`
+  overrides and left the device configuration's switch off.
+- No tablet activation, boot or display test has been performed.
+
+## Historical Waydroid audit and source search (before local implementation)
+
+- **Not an end-to-end Android implementation yet.** `rmpp_android` is a
+  prerequisite toolkit. The upstream Debian-root namespace, image initialization,
+  D-Bus policy, binder/cgroup setup, GPU properties, display/input bridge,
+  takeover/teardown and launcher integration are not installed by this flake.
+- Missing Rust entry points are an upstream problem, confirmed by
+  https://github.com/MaximeRivest/android-on-remarkable-paper-pro/issues/1
+  and the pinned Cargo manifest:
+  https://github.com/MaximeRivest/android-on-remarkable-paper-pro/blob/65b5bf34fb3ef160e3d483a14484b46304ecbc7c/einkbridge/Cargo.toml
+  Both declared Rust files are absent. Verified through GitHub recursive trees,
+  `git ls-remote`, the one public branch, empty pull/release lists, and empty
+  commit history for `einkbridge/src/main.rs`.
+- Public forks checked: https://github.com/mio-19/android-on-remarkable-paper-pro
+  and https://github.com/1C8Flyers/android-on-remarkable-paper-pro ; both point
+  to the identical upstream commit. No replacement was found in the author's
+  `remarkable-experiments`, `rmpp-display-notes`, `remagic`, `riddle`, `chromium`
+  repositories or public gists, or via indexed web/code searches. grep.app
+  returned HTTP 429, so that index was not exhaustively searched.
+- A similarly named bridge has source at
+  https://github.com/gitman-101111/chiappa/tree/main/eink but targets the Paper
+  Pro Move with rm2fb/VKMS and vendor QPA. It is not this Rust wlr-screencopy
+  bridge and is not a drop-in replacement for ferrari.
+- https://github.com/MaximeRivest/quill has source (inspected commit
+  `39262ee0bef69915e3ead3ac218d5973916f422a`). Its build and vendor/README.md
+  require the device's `libqsgepaper.so` and matching Qt boundary. No proprietary
+  display binary has been added to this repository.
+- Added missing direct prerequisites from upstream `session.sh`/`enter.sh`:
+  seatd, wlr-randr, D-Bus, Bash/coreutils/procps/util-linux, LXC, kmod, iproute2,
+  iptables and dnsmasq. Removed the redundant standalone wlroots package;
+  labwc already links the version it was built against. Included upstream's
+  Cargo metadata and license with the reference files.
+- Added `checks.<system>.rmpp_waydroid_kernel`: verifies **159** settings,
+  actual etnaviv/scheduler/veth/bridge/tun/NAT modules, module archive, kernel
+  images, and enabled Vivante GPU nodes in all four Ferrari DTBs. Passes for
+  both cached 6.12.49-waydroid and the freshly built 6.12.115-waydroid output.
+  The fragment's only discarded positive symbol is `CONFIG_NFT_COUNTER`, which
+  no longer exists: `nft_counter.o` is part of `nf_tables` unconditionally.
+  https://github.com/torvalds/linux/blob/v6.12/net/netfilter/Makefile#L79-L98
+- Runtime smoke testing uses headless pixman in OrbStack, not the tablet GPU.
+  Confirmed an 810x1080 output and `zwlr_screencopy_manager_v1` v3 plus virtual
+  pointer/keyboard globals; Waydroid reports version 1.6.3. The packaged
+  `rmpp_waydroid_runtime` check passes inside the Nix build sandbox.
+  `nix flake check --all-systems --no-build` also passes (evaluation only).
+- Rebuild/check command in OrbStack (after syncing):
+  `nix --extra-experimental-features "nix-command flakes" build --accept-flake-config --no-link --print-out-paths .#rmpp_android .#rmpp_android_files .#rmpp_kernel .#checks.aarch64-linux.rmpp_waydroid_kernel .#checks.aarch64-linux.rmpp_waydroid_runtime`.
+- Resolution: the local implementation above replaces the missing bridge and
+  private-root lifecycle. Device bring-up still requires a kernel backup and
+  the documented A/B fallback; upstream architecture prose is not a device test.
 
 ## Done
 
@@ -32,8 +169,9 @@ path below is still open).
       a `/home/root` copy because the launcher writes `.lock`/`rmweb.log`).
 - [x] Mesa: nixpkgs `mesa` (llvmpipe/swrast, surfaceless EGL) instead of
       upstream's `build/stage-mesa`.
-- [x] `default.nix`: `rmpp_android` (waydroid, labwc,
-      wlroots, wayland-utils, mesa — all cached aarch64) + `rmpp_android_files`
+- [x] `default.nix`: `rmpp_android_tools` (native cached aarch64
+      Waydroid/compositor/container utilities), `rmpp_android` (session
+      controller + einkbridge + Quill on top of it) + `rmpp_android_files`
       (kernel fragment, GPU DT patch, scripts, units, theme verbatim).
 - [x] Activation checks: compares `/etc/version` (major.minor) and `uname -r`
       against the generation's `os` file and warns on a mismatch instead of
@@ -70,8 +208,8 @@ path below is still open).
       activation compares `uname -r` against 6.12.115-waydroid. The build
       prints what applied and ships the rejects.
       **Compiled on aarch64 with the switch on**: the tree builds at
-      6.12.115-waydroid after carrying the port described below, so the switch
-      defaults to **on** in config.nix.
+      6.12.115-waydroid after carrying the port described below; the switch
+      remains **off** in config.nix pending device verification.
 - [x] `nixfmt` clean; every package evaluates (`nix eval .#…drvPath`);
       `.#rmpp_tools` verified to substitute from cache.nixos.org (aarch64 ELF).
 - [x] Docs: `remarkable-paper-pro.md` covers the flake, the source build and the
@@ -87,7 +225,7 @@ read the macOS checkout over virtiofs, and the flake's `nixConfig` is not
 honoured without `--accept-flake-config`:
 
 ```sh
-tar --exclude=.git -cf /tmp/rmnixpkgs.tar . | orb -m nixos bash -lc \
+tar --exclude=.git -cf - . | orb -m nixos bash -lc \
   'rm -rf ~/rmnixpkgs && mkdir -p ~/rmnixpkgs && tar -xf - -C ~/rmnixpkgs'
 orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command flakes";
   cd ~/rmnixpkgs && nix build --accept-flake-config -L --cores 6 .#rmpp_kernel'
@@ -134,7 +272,7 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   `ferrari-rev-*`), modules in `lib/modules/6.12.115-waydroid` plus 3.8 MB
   tarball, `CONFIG_DRM_ETNAVIV=m`/`CONFIG_DRM_SCHED=m`, and
   `share/rmpp-kernel/security-patches` recording 25 clean / 41 partial and the
-  100 rejected hunks, plus every backport and port applied. That is the default;
+  163 rejected hunks, plus every backport and port applied. That is the opt-in stable-chain build;
   the derivation is the build-time chain application, not a committed reversed
   artifact (see below).
 
@@ -238,7 +376,7 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   land in `/lib/modules/<release>` on the device.
 - Stable chain, measured on the real tree (x86_64 host, GNU patch 2.8,
   `patch -p1 --batch --forward --fuzz=2`, 66 patches 6.12.49 → 6.12.115):
-  **25 apply cleanly, 41 partially, 100 hunks rejected**; the Makefile still
+  **25 apply cleanly, 41 partially, 163 hunks rejected**; the Makefile still
   lands on `SUBLEVEL = 115`, so no patch to the version was lost. Rejects sit
   where reMarkable's NXP base differs from vanilla: `imx8-isi`,
   `freescale` networking (`enetc`, `dpaa2`), `fsl-edma`, `gpio-mxc`,
@@ -262,9 +400,9 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   flips slots after repeated late-UI reboots (dualboot installer notes).
   `install-kernel.sh` backs the stock fitImage up to
   `/home/root/waydroid/backup` and renames the new one into place atomically.
-- Stable chain on this tree: the switch is **on** and the kernel builds at
+- Stable chain on this tree: the switch is **off** by default; enabling it builds at
   6.12.115-waydroid. The chain itself still reports **25 clean / 41 partial /
-  100 rejected hunks** (measured above); what changed is that the tree now
+  163 rejected hunks** (measured above); what changed is that the tree now
   compiles with those applied, by carrying the smallest patch for every place
   where a chain level and reMarkable's NXP code disagree. Eight files, each
   with the upstream incr-patch URL in its header and no formatting-only change:
@@ -291,15 +429,18 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   smart-suspend fixes that must stay. It is a refactor, not a security fix, and
   reMarkable's irq-gic-v3/imx-gpcv2/gpio-vf610/pinctrl-imx/scu-pd were not
   converted. The build ships the derived subset as `syscore-revert.patch`.
-- The 100 rejected hunks are still missing fixes, not applied ones: they are
+- The 163 raw-chain rejected hunks (across 100 rejected files) are recorded
+  before the explicit ports and syscore reversal. They must be assessed against
+  those later steps before classifying a fix as missing. The raw rejects are
   listed per file in `share/rmpp-kernel/security-patch-rejects`, and sit in
   NXP/vendor code (`imx8-isi`, `enetc`, `fsl-edma`, i.MX dtsi, …) whose context
   vanilla upstream does not have. Nothing was reformatted to make one apply.
 - **Compilation under the security chain has been run**, for the first time when
   this was written. The previous sentence still holds: the build compiles with
   the 25 clean / 41 partial applied, by carrying those eight patches plus the
-  build-time syscore revert, and the 100 rejects remain what they were. The
-  build is the base case the checklist depends on; chasing the 100 rejects is
+  build-time syscore revert. The raw reject count describes chain application
+  before those ports, rather than the final number of missing fixes. The
+  build is the base case the checklist depends on; chasing the 163 raw-chain rejects is
   the next item, not a precondition for it.
 
 ### Ecosystem on the device (what a config layer must not break)
@@ -363,18 +504,18 @@ option 1.
       wrapper env. See "Builds on aarch64 (verified)".
 - [ ] Test on device: `nix copy` the closure, copy the tree to
       `/home/root/rmweb`, `install.sh`, page turns, downloads, AppLoad icon.
-- [ ] Test `rmpp_android` on device: `labwc` start, Waydroid bring-up, GPU
+- [ ] Validate the local Waydroid implementation on the
+      device: `labwc` start, Waydroid bring-up, GPU
       (mesa's etnaviv drivers are linked into `$env/lib/dri`).
 - [x] Build `.#rmpp_kernel` on aarch64 hardware and check the output: fitImage,
       Image, dtbs, `CONFIG_DRM_ETNAVIV=m`, patched ferrari dtb — both without
-      the chain (6.12.49-waydroid) and with it (**6.12.115-waydroid**, the
-      default). See "Builds on aarch64 (verified)".
+      the chain (6.12.49-waydroid) and with it (**6.12.115-waydroid**, opt-in). See "Builds on aarch64 (verified)".
 - [x] Port the stable chain so it compiles: the eight patched files above, the
       derived syscore revert, the switch on, and a clean Nix build at
       6.12.115-waydroid.
-- [ ] Chase the remaining 100 rejected hunks if any of them matters for this
+- [ ] Audit the 163 raw-chain rejected hunks if any of them matters for this
       device: `share/rmpp-kernel/security-patch-rejects` is the list, and each
-      needs a hand port like the eight above (mostly imx8-isi/enetc/fsl-edma,
+      needs assessment against the eight existing ports (mostly imx8-isi/enetc/fsl-edma,
       which this device does not use).
 - [ ] Flash the kernel on a device (after the backup) and verify
       `/dev/dri/renderD128` appears, `etnaviv` is in dmesg, and Mesa's etnaviv
@@ -398,8 +539,8 @@ option 1.
 - [x] Update `TODO.md`/commit as each item lands; do not hand-edit generated
       files; `nixfmt` every `.nix` touched. (Today's landing: mark the two source
       builds and the chain-compile done, and align the docs with what this host
-      has verified. Limitations recorded: no device test, no re-render, 100
-      rejects still open.)
+      has verified. Limitations recorded: no device test, no re-render, 163
+      raw-chain rejects still open.)
 
 ## How to resume
 

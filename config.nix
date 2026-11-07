@@ -10,6 +10,9 @@
 # could disagree with the packages that were actually built).
 {
   rmpp = {
+    # Installs a manual rmpp-android service and our own AppLoad entry. It does
+    # not download Android images, flash a kernel, or start Android at boot.
+    android.enable = true;
     # PATH for the generation's bin/ (rmpp.packages), also for the OS-update-safe
     # login shell.
     files."profile.d/rmpp-path.sh".text = ''
