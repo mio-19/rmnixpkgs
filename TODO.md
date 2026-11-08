@@ -53,10 +53,16 @@ reMarkable OS 3.28.0.172 on Slot B.
   - Fetched `dps/remarkable-wikipedia` directly at commit `7c48ade8fe485fdf1799fb641523148023963baa` via `fetchFromGitHub`.
   - Replaced Qt 5-specific RM1 Wacom `EventFilter` and `XMLHttpRequest` with a minimal patch (`0001-use-libzim-backend.patch`) connecting directly to `WikipediaBackend` (`libzim`).
 
-- **AppLoad Automatic Boot Injection:**
+- **AppLoad Automatic Boot Injection & Boot Time Optimization:**
   - Added `before` option to `serviceModule` in `system.nix` and declared `before = [ "xochitl.service" ];` in `rmpp-config` service definition.
   - Ensures `rmpp-config.service` applies XOVI drop-ins and AppLoad tiles before `xochitl` launches on boot.
-  - Added `/etc` submount unmounting in `activate.sh` to avoid `EBUSY` when vellum's `mount-rw` unmounts the overlay during boot unit installation.
+  - Added `[ "$mode" = boot ] && return 0` in `apply_vellum()` inside `activate.sh`: on system boot, declarative package installation is skipped (since packages already reside persistently in `/home/root/.vellum`), preventing 18 sequential offline network timeout stalls from blocking `xochitl.service`.
+  - Scoped submount unmounting in `activate.sh` to `/etc/systemd/` only and preserved `/etc/dropbear` bind-mounts to prevent SSH connection drops after activation.
+
+- **ZIM Main Page Redirect Resolution (`rmpp-wikipedia`):**
+  - In `alpinelinux.zim` (and several MediaWiki/Kiwix ZIM archives), `archive.getMainEntry()` points to an internal unindexed redirect `mainPage` leading to `Main_Page`. Looking up `hasEntryByPath("mainPage")` fails because redirect index entries are not in the URL title index.
+  - Resolved redirect chains in `WikipediaBackend::openArchive` via `while (mainEntry.isRedirect()) mainEntry = mainEntry.getRedirectEntry();` and bound `m_mainPage` directly to the target path.
+  - Added alias fallback in `findEntry` for `""`, `"Home"`, `"mainPage"`, and `"main"` to return `m_archive->getMainEntry()`, plus `m_searcher->suggest()` approximate path recovery.
 
 ## Dual-Reader Strategy: Kiwix Desktop & Native QML Wikipedia Reader
 

@@ -278,6 +278,7 @@ apply_appload() {
 #   * failures warn instead of aborting: activation also runs at boot, and an
 #     offline tablet still needs its units and AppLoad entries.
 apply_vellum() {
+	[ "$mode" = boot ] && return 0
 	[ -f "$gen/vellum.packages" ] || return 0
 	mkdir -p "$STATE"
 
@@ -388,13 +389,20 @@ apply_profile() {
 install_boot_unit() {
 	[ -f "$gen/systemd/$BOOT_UNIT" ] || die "generation has no $BOOT_UNIT; declare it in rmpp.systemd.services"
 
-	# Unmount any active submounts under /etc (such as xovi's tmpfs on /etc/systemd/system/*.d)
+	# Unmount active submounts under /etc/systemd/ (such as xovi's tmpfs on /etc/systemd/system/*.d)
 	# so that unmounting the /etc overlay does not fail with 'target is busy'.
-	for m in $(awk '$2 ~ "^/etc/" {print $2}' /proc/mounts 2>/dev/null); do
+	for m in $(awk '$2 ~ "^/etc/systemd/" {print $2}' /proc/mounts 2>/dev/null); do
 		umount -q "$m" 2>/dev/null || true
 	done
 
-	restore() { :; }
+	ensure_dropbear_keys() {
+		if [ -d /home/root/.dropbear ] && ! awk '$2 == "/etc/dropbear" { found = 1 } END { exit !found }' /proc/mounts 2>/dev/null; then
+			mkdir -p /etc/dropbear
+			mount --bind /home/root/.dropbear /etc/dropbear 2>/dev/null || true
+		fi
+	}
+
+	restore() { ensure_dropbear_keys; }
 	if [ -x "$VELLUM_MOUNT_RW" ]; then
 		log "using vellum's mount-rw (mount-utils)"
 		"$VELLUM_MOUNT_RW" || die "vellum mount-rw failed"
@@ -404,18 +412,19 @@ install_boot_unit() {
 			else
 				warn "vellum mount-restore missing; leaving mounts as they are"
 			fi
+			ensure_dropbear_keys
 		}
 	else
 		mount -o remount,rw / || die "could not remount / read-write (is developer mode enabled?)"
 		if awk '$2 == "/etc" && $3 == "overlay" { found = 1 } END { exit !found }' /proc/mounts; then
 			log "collapsing the /etc tmpfs overlay so the unit reaches the real rootfs"
 			umount -R /etc || die "could not unmount the /etc overlay (a process may be holding it)"
-			if [ -d /home/root/.dropbear ]; then
-				mkdir -p /etc/dropbear
-				mount --bind /home/root/.dropbear /etc/dropbear || warn "could not re-bind /etc/dropbear"
-			fi
+			ensure_dropbear_keys
 		fi
-		restore() { mount -o remount,ro / || warn "could not remount / read-only"; }
+		restore() {
+			mount -o remount,ro / || warn "could not remount / read-only"
+			ensure_dropbear_keys
+		}
 	fi
 	trap 'restore' EXIT HUP INT TERM
 

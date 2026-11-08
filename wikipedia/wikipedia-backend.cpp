@@ -49,11 +49,19 @@ bool WikipediaBackend::openArchive(const QString &path)
 
         // Determine main page
         if (m_archive->hasMainEntry()) {
-            m_mainPage = QString::fromStdString(m_archive->getMainEntry().getPath());
-        } else if (m_archive->hasEntryByPath("main")) {
-            m_mainPage = "main";
+            auto mainEntry = m_archive->getMainEntry();
+            while (mainEntry.isRedirect()) {
+                try {
+                    mainEntry = mainEntry.getRedirectEntry();
+                } catch (...) {
+                    break;
+                }
+            }
+            m_mainPage = QString::fromStdString(mainEntry.getPath());
         } else if (m_archive->hasEntryByPath("Main_Page")) {
             m_mainPage = "Main_Page";
+        } else if (m_archive->hasEntryByPath("main")) {
+            m_mainPage = "main";
         } else if (m_archive->hasEntryByPath("A/Main_Page.html")) {
             m_mainPage = "A/Main_Page.html";
         } else {
@@ -124,11 +132,31 @@ zim::Entry WikipediaBackend::findEntry(const QString &query)
     }
 
     QString q = query.trimmed();
+    int hashIdx = q.indexOf('#');
+    if (hashIdx >= 0) {
+        q = q.left(hashIdx).trimmed();
+    }
     while (q.startsWith("./")) {
         q = q.mid(2);
     }
+    while (q.startsWith("../")) {
+        q = q.mid(3);
+    }
     while (q.startsWith("/")) {
         q = q.mid(1);
+    }
+
+    // 0. Main page or Home aliases
+    if (q.isEmpty() || q.compare("Home", Qt::CaseInsensitive) == 0 ||
+        q.compare("mainPage", Qt::CaseInsensitive) == 0 ||
+        q.compare("Main_Page", Qt::CaseInsensitive) == 0 ||
+        q.compare("main", Qt::CaseInsensitive) == 0) {
+        if (m_archive->hasMainEntry()) {
+            return m_archive->getMainEntry();
+        }
+        if (!m_mainPage.isEmpty() && m_archive->hasEntryByPath(m_mainPage.toStdString())) {
+            return m_archive->getEntryByPath(m_mainPage.toStdString());
+        }
     }
 
     std::string s = q.toStdString();
@@ -195,6 +223,21 @@ zim::Entry WikipediaBackend::findEntry(const QString &query)
     std::string sspace = spaceReplaced.toStdString();
     if (m_archive->hasEntryByTitle(sspace)) {
         return m_archive->getEntryByTitle(sspace);
+    }
+
+    // 8. Suggestion search fallback for approximate matches
+    if (m_searcher) {
+        try {
+            auto search = m_searcher->suggest(q.toStdString());
+            auto results = search.getResults(0, 1);
+            if (results.size() > 0) {
+                std::string suggPath = results.begin()->getPath();
+                if (m_archive->hasEntryByPath(suggPath)) {
+                    return m_archive->getEntryByPath(suggPath);
+                }
+            }
+        } catch (...) {
+        }
     }
 
     throw std::runtime_error("Entry not found in archive");
