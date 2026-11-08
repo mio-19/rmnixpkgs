@@ -306,16 +306,17 @@ in
       };
     };
 
-    # What this generation was built for. Read-only: the release is declared
-    # once, in os.nix, because the kernel source pin and the userland ABI both
-    # derive from it — a second copy set here could disagree with the packages
-    # that were actually built.
+    # What this generation was built for. `version` selects the supported
+    # reMarkable OS firmware release ("3.27" or "3.28") and picks the matching
+    # kernel source and device trees.
     os = {
       version = lib.mkOption {
-        type = lib.types.str;
-        readOnly = true;
+        type = lib.types.enum [
+          "3.27"
+          "3.28"
+        ];
         default = os.version;
-        description = "reMarkable OS release this configuration targets (os.nix).";
+        description = "reMarkable OS release this configuration targets (3.27 or 3.28).";
       };
       glibc = lib.mkOption {
         type = lib.types.str;

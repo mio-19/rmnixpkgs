@@ -4,12 +4,14 @@
 # Coexistence is the constraint: everything below either lives in the store or
 # under /home/root, and nothing claims a path that vellum, XOVI or AppLoad own.
 # See remarkable-paper-pro.md for the ecosystem map.
-# The reMarkable OS release this configuration is for is declared once, in
-# os.nix: `rmpp.os.*` below is read-only and simply reports it (the kernel source
-# pin and the userland ABI both derive from that file, so a second copy here
-# could disagree with the packages that were actually built).
+# The reMarkable OS release this configuration is for is selected by
+# `rmpp.os.version` ("3.27" or "3.28", default "3.28"): the kernel source pin,
+# device trees, and userland ABI derive from os.nix for the chosen release.
 {
   rmpp = {
+    # Target reMarkable OS firmware release ("3.27" or "3.28").
+    os.version = "3.28";
+
     # Installs a manual rmpp-android service and our own AppLoad entry. It does
     # not download Android images, flash a kernel, or start Android at boot.
     android.enable = true;
@@ -32,7 +34,10 @@
         "home.mount"
         "nix.mount"
       ];
-      wants = [ "home.mount" ];
+      wants = [
+        "home.mount"
+        "nix.mount"
+      ];
       wantedBy = "multi-user.target";
     };
 

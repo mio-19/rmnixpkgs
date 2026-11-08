@@ -22,10 +22,9 @@
       rmppPkgs = import ./aarch64-pkgs.nix pkgs;
       upstream = inputs.android-on-remarkable-paper-pro;
 
-      # The OS release this all targets, declared once (os.nix) and handed to
-      # everything that has to agree with the installed system: the kernel
-      # source pin, and the generation's record of what it was built for.
-      os = import ./os.nix;
+      # The OS release registry (os.nix) holds the definitions for supported
+      # reMarkable OS releases (3.27, 3.28), ABI, and kernel source pins.
+      osRegistry = import ./os.nix;
 
       # Command line tools that are useful on the tablet itself. Syncthing is
       # the well-trodden way to get files on and off a Paper Pro (headless
@@ -61,15 +60,15 @@
           };
         };
 
-      # Two-phase on purpose: the kernel's version depends on
-      # `rmpp.kernel.securityPatches.enable`, and that switch lives in
-      # config.nix, so the module is evaluated once with the release exactly as
-      # os.nix pins it to read the switch, then — only when the stable chain is
-      # on — again with the version that chain produces. The second evaluation
-      # is the generation that gets built and activated, so `$out/os` records
-      # 6.12.115 and activation compares `uname -r` against 6.12.115-waydroid
-      # instead of the vendor's 6.12.49-waydroid.
-      baseConfig = mkConfig os null;
+      # Two-phase evaluation:
+      # 1. Base evaluation using the default OS release to read configuration
+      #    switches (`rmpp.os.version` to pick the target OS release 3.27/3.28,
+      #    and `rmpp.kernel.securityPatches.enable` for upstream stable patches).
+      # 2. Second evaluation with the exact target OS and kernel version, producing
+      #    the generation that gets built and activated ($out/os and $out/kernel).
+      baseConfig = mkConfig osRegistry.default null;
+      targetVersion = baseConfig.config.rmpp.os.version;
+      os = osRegistry.forVersion targetVersion;
       applyStablePatches = baseConfig.config.rmpp.kernel.securityPatches.enable;
       kernelVersion =
         if applyStablePatches then
@@ -77,11 +76,29 @@
         else
           os.kernel.version;
 
-      rmpp_kernel = rmppPkgs.callPackage ./kernel.nix {
-        inherit os applyStablePatches kernelVersion;
-        configFragment = "${upstream}/kernel/waydroid.cfg";
-        gpuDeviceTreePatch = "${upstream}/kernel/gpu-etnaviv-dt.patch";
-      };
+      mkKernel =
+        osForKernel:
+        let
+          kv =
+            if applyStablePatches then
+              "${lib.versions.majorMinor osForKernel.kernel.version}.${toString osForKernel.kernel.stable.last}"
+            else
+              osForKernel.kernel.version;
+        in
+        rmppPkgs.callPackage ./kernel.nix {
+          # Use GCC 13 matching the device's native Yocto scarthgap toolchain (GCC 13.4.0)
+          # to avoid experimental GCC 16 codegen/relocation breakages in arm64 early boot.
+          stdenv = rmppPkgs.gcc13Stdenv;
+          os = osForKernel;
+          inherit applyStablePatches;
+          kernelVersion = kv;
+          configFragment = "${upstream}/kernel/waydroid.cfg";
+          gpuDeviceTreePatch = "${upstream}/kernel/gpu-etnaviv-dt.patch";
+        };
+
+      rmpp_kernel = mkKernel os;
+      rmpp_kernel_3_27 = mkKernel osRegistry.releases."3.27";
+      rmpp_kernel_3_28 = mkKernel osRegistry.releases."3.28";
 
       rmppConfig = mkConfig (
         if applyStablePatches then
@@ -395,8 +412,10 @@
         # os.nix on top unless `rmpp.kernel.securityPatches.enable = false`.
         # Native aarch64: a kernel build wants a real aarch64 CPU, hours on many
         # cores, ~30 GB of tree.
+        # rmpp_kernel builds for the configured rmpp.os.version (3.27 or 3.28).
+        # rmpp_kernel_3_27 and rmpp_kernel_3_28 are version-specific shortcuts.
         # nix build .#rmpp_kernel -o rmpp-kernel
-        inherit rmpp_kernel;
+        inherit rmpp_kernel rmpp_kernel_3_27 rmpp_kernel_3_28;
 
         # nix build .#rmpp_config -o rmpp-config
         # scp/copy the closure, then on the device:

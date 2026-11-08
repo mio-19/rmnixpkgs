@@ -13,6 +13,7 @@
   perl,
   ubootTools,
   xz,
+  zstd,
   os,
   kernelVersion,
   applyStablePatches,
@@ -146,6 +147,7 @@ stdenv.mkDerivation (finalAttrs: {
     perl
     ubootTools # mkimage, for the fitImage
     xz # the stable patches are published as .xz and unpacked with `xz -dc`
+    zstd # module compression (CONFIG_MODULE_COMPRESS_ZSTD)
   ];
 
   # The gcc wrapper's hardening flags do not survive a kernel build.
@@ -302,6 +304,13 @@ stdenv.mkDerivation (finalAttrs: {
     # (merge_config keeps existing values, so this cannot disable stock options).
     make ARCH=arm64 ferrari_defconfig
     KCONFIG_CONFIG=.config bash scripts/kconfig/merge_config.sh -m -O . .config ${configFragment}
+    make ARCH=arm64 olddefconfig
+
+    # Relative relocation packing (CONFIG_RELR) is auto-enabled when building with
+    # newer binutils/GCC that detect TOOLS_SUPPORT_RELR. On arm64 uncompressed Image
+    # booted by U-Boot, RELR relocations cause a silent exception during early boot
+    # before console init. Disable it to match stock Yocto GCC 13 behavior.
+    ./scripts/config --disable CONFIG_RELR
     make ARCH=arm64 olddefconfig
 
     make ARCH=arm64 -j''${NIX_BUILD_CORES:-1} Image dtbs modules

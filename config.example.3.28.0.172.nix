@@ -18,6 +18,9 @@
 
 {
   rmpp = {
+    # Target reMarkable OS firmware release ("3.27" or "3.28").
+    os.version = "3.28";
+
     # -------------------------------------------------------------------------
     # Waydroid / Android takeover
     # -------------------------------------------------------------------------
@@ -66,7 +69,10 @@
         "home.mount"
         "nix.mount"
       ];
-      wants = [ "home.mount" ];
+      wants = [
+        "home.mount"
+        "nix.mount"
+      ];
       wantedBy = "multi-user.target";
     };
 
