@@ -48,6 +48,12 @@ reMarkable OS 3.28.0.172 on Slot B.
   - GPU: Vivante GC600 rev 4653 bound and initialized by `etnaviv` (`/dev/dri/renderD128` active).
   - Android/Waydroid support: `binderfs` active (`nodev binder`), CMA pool 640 MiB allocated.
   - Declarative boot unit: `nix.mount` and `rmpp-config.service` active and verified.
+  - AppLoad & rmweb hybrid layout: `rmpp_rmweb_prebuilt` (`mr14gr90a33l...`) copied into Nix store.
+    `/home/root/rmweb` configured as a lightweight (~500 KB) hybrid directory: runtime files (`.lock`,
+    `rmweb.log`, `appload-entry.sh`, `ovl/`) live directly on `/home`, while large read-only trees
+    (`lib/`, `bin/`, `libexec/`, `share/`, `appload/`) symlink into `/nix/store`, saving ~600 MB.
+    AppLoad manifest configured with `disablesWindowedMode=true` and pointing to `appload-entry.sh`
+    (`systemd-run --scope`) to prevent xochitl cgroup cleanup from terminating the browser on startup.
   - Vellum: 14 packages managed and synchronized with `config.nix`.
 
 ## Local Waydroid implementation (2026-11-07)
