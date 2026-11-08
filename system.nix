@@ -258,7 +258,10 @@ let
     ZIM=$(find "$ZIM_DIR" -maxdepth 1 -name "*.zim" 2>/dev/null | head -n 1)
     echo "[kiwix] ZIM=''${ZIM:-none}"
 
-    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage"
+    export QT_ENABLE_HIGHDPI_SCALING=1
+    export QT_SCALE_FACTOR=1.75
+    export QT_FONT_DPI=226
+    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage --force-device-scale-factor=1.75"
     export HOME="/home/root"
 
     ${pkgs.kiwix}/bin/kiwix-desktop \
@@ -518,6 +521,7 @@ in
           application = "${kiwixLauncher}";
           icon = ./kiwix-icon.png;
           qtfb = true;
+          disablesWindowedMode = true;
           environment = {
             VNSEE_WAVEFORM_MODE = "STANDARD";
             VNSEE_ENCODING = "COPYRECT";

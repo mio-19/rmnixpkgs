@@ -23,13 +23,56 @@ reMarkable OS 3.28.0.172 on Slot B.
   - Built natively for `aarch64-linux` (`pkgs.kiwix` / `kiwix-2.5.1`) via nixpkgs.
   - Substituted and copied 154-path closure into the reMarkable Paper Pro Nix store (`/nix/store/iax2x9sv594d90qrqkc6wjy7nxi69jk4-kiwix-2.5.1`).
   - Runs natively without headless server daemons: configured with `--no-sandbox` (required for running as root), software GL fallback (`--disable-gpu`), and QTFB integration via `qtfb-shim.so`.
+- **Display Scaling & Fullscreen Window Geometry:**
+  - Screen resolution is 1620 × 2160 at 226 DPI.
+  - Set `disablesWindowedMode = true` in AppLoad manifest so the app launches fullscreen instead of a small window.
+  - Configured high-DPI scaling flags in launcher: `QT_ENABLE_HIGHDPI_SCALING=1`, `QT_SCALE_FACTOR=1.75`, `QT_FONT_DPI=226`, and `--force-device-scale-factor=1.75` for Chromium rendering.
+  - Text input: External physical keyboard via USB OTG / Bluetooth, or AppLoad on-screen virtual keyboard.
 - **AppLoad & QTFB Integration:**
   - Registered AppLoad external application tile `kiwix` in `config.nix` with official vector icon (`kiwix-icon.png`).
-  - Manifest configured with `"qtfb": true`, `QTFB_SHIM_MODEL="RM1"`, `QTFB_SHIM_RESPECT_APP_REFRESH_MODES="true"`, and `QTFB_SHIM_RESPECT_FULL_REFRESH_REQUESTS="true"`.
+  - Manifest configured with `"qtfb": true`, `disablesWindowedMode: true`, `QTFB_SHIM_MODEL="RM1"`, `QTFB_SHIM_RESPECT_APP_REFRESH_MODES="true"`, and `QTFB_SHIM_RESPECT_FULL_REFRESH_REQUESTS="true"`.
   - Launcher script `/home/root/kiwix/kiwix.sh` automatically detects `.zim` archives under `/home/root/zim/` and launches `kiwix-desktop` directly into the e-ink display.
   - Tested opening `/home/root/zim/alpinelinux.zim` on real device.
 - **Kiwix Tools CLI (`kiwix-tools` 3.8.2):**
   - `kiwix-tools` added to `rmpp.packages` exposing `kiwix-search`, `kiwix-manage`, and `kiwix-serve` on system PATH (`/home/root/.rmpp/current/bin/`).
+
+## Dual-Reader Strategy: Kiwix Desktop & Native QML Wikipedia Reader
+
+We maintain two complementary readers for offline `.zim` knowledge bases on the Paper Pro, sharing the same storage directory (`/home/root/zim/*.zim`):
+
+1. **Option A: Kiwix Desktop (`kiwix-desktop` 2.5.1)**
+   - *Engine:* Full Chromium via QtWebEngine.
+   - *Strengths:* Complete HTML5/CSS, complex mathematical formulas, rich media rendering, interactive ZIM webapps.
+   - *Display path:* VNC QPA (`-platform vnc:size=1620x2160,port=5900`) bridged to QTFB via `vnsee-qtfb`.
+   - *Scale:* High-DPI scaled (1.75x) to match the 226 DPI display.
+
+2. **Option B: Native E-Ink Wikipedia Reader (`rmpp-wikipedia`)**
+   - *Upstream base:* `https://github.com/dps/remarkable-wikipedia` (MIT).
+   - *Engine:* Pure Qt Quick / QML (no QtWebEngine Chromium overhead, no offscreen surface issues).
+   - *Display path:* Direct `linuxfb` / `qtfb-shim.so` or software QML scene on QTFB.
+   - *Input:* Native built-in on-screen soft keyboard (`Keyboard.qml`, `KeyboardKey.qml`) tailored specifically for e-paper touch typing, plus swipe gesture pagination (`SwipeArea.qml`).
+   - *Eliminating `kiwix-serve` via C++ QObject (`libzim`):*
+     - The original upstream app relied on running an external `kiwix-serve` HTTP daemon on port 8081 and issued `XMLHttpRequest` network calls.
+     - We eliminate `kiwix-serve` entirely by writing a small C++ `QObject` backend (`ZimBackend`) linking directly against `pkgs.libzim` 9.8.2.
+     - Directly loads `zim::Archive` in-process from `/home/root/zim/*.zim`.
+     - Exposes `Q_INVOKABLE QString getArticleHtml(const QString &titleOrPath)`, resolving redirects (`entry.getItem(true)`) and returning article HTML in memory without sockets or HTTP overhead.
+     - Exposes `Q_INVOKABLE QVariantList searchSuggestions(const QString &prefix, int limit = 8)` using `zim::SuggestionSearcher` against the archive's internal title index.
+     - Exposes `Q_INVOKABLE QString getMainPage()` and `Q_INVOKABLE QStringList listArchives()`.
+
+## Analysis: `gitman-101111/chiappa` (reMarkable Paper Pro Move)
+
+Analysis of `https://github.com/gitman-101111/chiappa` for applicability to our Paper Pro (`ferrari`) project:
+
+- **Target Device Distinction:**
+  - `chiappa` targets the **reMarkable Paper Pro Move** (FCC ID `2AMK2-RM03AA`, NXP i.MX 93 with 2× Cortex-A55 @ 1.7 GHz, 2 GB LPDDR4, 1696×954 264 DPI Gallery 3 color e-paper).
+  - Our project targets the **reMarkable Paper Pro** (codename `ferrari`, NXP i.MX 8M Mini with 4× Cortex-A53, Vivante GC600 GPU, 1620×2160 226 DPI Gallery 3 color e-paper).
+- **Display Pipeline Architecture:**
+  - `chiappa`: SoC LCDIFv3 connects directly via a 16-bit parallel RGB bus (`imx93-parallel-display-format`, RGB565) to `panel-rm-cumulus` at 365×1700 transport framing. There is no FPGA bitstream and no Vivante GPU.
+  - `ferrari` (our device): LCDIF connects to the Vivante GC600 GPU (`etnaviv`), which transmits frames over MIPI-DSI to an FPGA display controller (`rm-cumulus-bridge.c`).
+- **Valuable Components & Techniques for our Project:**
+  - **VKMS Writeback Bridge (`eink/src/vkms_bridge.c`):** An elegant alternative to `wlr-screencopy` for generic Wayland compositors. Instead of patching compositors or using Wayland protocols, the bridge configures DRM VKMS with writeback (`modprobe vkms enable_writeback=1`) and creates DRM leases (`drmModeCreateLease`) handing CRTC/planes to compositors. The compositor flips planes as if on real hardware, and the bridge captures composited frames via the DRM writeback connector. This concept can be adapted to any Linux compositor without protocol dependencies.
+  - **Elan Touch PM rules (`eink/60-chiappa-touch.rules`):** Udev rules configuring runtime power management and autosuspend parameters for Elan SPI touch/pen (`elants_spi`), which can improve touch responsiveness and stylus power behavior.
+  - **Recovery & Bootloader Documentation (`docs/booting-a-custom-os.md`, `recovery/`):** Detailed walkthroughs of NXP ELE / AHAB lifecycle states (`unlocked=yes` Developer Mode), U-Boot FIT image signing verification bypass, and USB SDP recovery scripts (`rm_recover` / `uuu`).
 
 ## Firmware 3.28 Deployment & Device Validation (2026-11-08)
 
@@ -498,6 +541,13 @@ option 1.
 
 ## Remaining tasks
 
+- [ ] Implement `rmpp-wikipedia` native Qt Quick reader with `libzim` C++ backend:
+      Eliminate `kiwix-serve` by compiling a `ZimBackend` QObject linked against `pkgs.libzim`,
+      replacing `XMLHttpRequest` in `dps/remarkable-wikipedia`, and integrating with `/home/root/zim/`.
+- [ ] Test `kiwix-desktop` high-DPI scaling (`QT_SCALE_FACTOR=1.75`) and fullscreen geometry
+      on real Paper Pro hardware via AppLoad tile.
+- [ ] Evaluate VKMS DRM writeback (`vkms_bridge.c` from `chiappa`) as an alternative to
+      `wlr-screencopy` for generic compositors on `ferrari`.
 - [ ] Decide the display path for source-built `rmweb`: add a QTFB present/input
       path or a Wayland session (`labwc`) to allow dropping `rmpp_rmweb_prebuilt`.
 - [ ] Validate the local Waydroid implementation on the device: `labwc` start,
