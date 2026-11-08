@@ -70,6 +70,10 @@
     # AppLoad via QTFB: runs directly on the device with offline ZIM content.
     kiwix.enable = true;
 
+    # Native Qt Quick offline Wikipedia reader linked to libzim (eliminates kiwix-serve):
+    # runs under AppLoad via QTFB and accesses /home/root/zim/*.zim.
+    wikipedia.enable = true;
+
     # Packages exposed on the generation's PATH. CallPackage'd from the flake's
     # aarch64 set, e.g. `pkgs.tmux`, so they are the same cached derivations the
     # other packages here use.

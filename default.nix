@@ -56,6 +56,7 @@
             rmppAndroidIcon = "${upstream}/device/icon.png";
             rmppChromium = config.packages.rmpp_chromium;
             rmppChromiumIcon = "${config.packages.rmpp_chromium.src}/chromium/icon.png";
+            rmppWikipedia = config.packages.rmpp_wikipedia;
             inherit rmppKernel;
           };
         };
@@ -397,6 +398,8 @@
           quill = config.packages.rmpp_quill;
           chromium = rmppPkgs.chromium;
         };
+
+        rmpp_wikipedia = rmppPkgs.callPackage ./wikipedia.nix { };
 
         rmpp_einkbridge = rmppPkgs.callPackage ./einkbridge.nix { inherit os; };
 

@@ -111,6 +111,10 @@
     # Offline .zim archives are stored under /home/root/zim/.
     # kiwix.enable = true;
 
+    # Native Qt Quick offline Wikipedia reader linked to libzim (no kiwix-serve).
+    # Runs under AppLoad via QTFB and shares /home/root/zim/*.zim with Kiwix.
+    # wikipedia.enable = true;
+
     # -------------------------------------------------------------------------
     # Device packages (aarch64-linux closures from cache.nixos.org)
     # -------------------------------------------------------------------------

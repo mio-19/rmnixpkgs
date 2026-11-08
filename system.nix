@@ -22,6 +22,7 @@
   rmppAndroidIcon ? null,
   rmppChromium ? null,
   rmppChromiumIcon ? null,
+  rmppWikipedia ? null,
   rmppKernel ? null,
   ...
 }:
@@ -285,12 +286,61 @@ let
       wait "$KIWIX_PID"
     fi
   '';
+
+  # Native Qt Quick Wikipedia offline reader launcher:
+  # Links directly to libzim (no kiwix-serve HTTP daemon). Runs with built-in VNC QPA
+  # on port 5901 and bridges into AppLoad QTFB via vnsee.
+  wikipediaLauncher = pkgs.writeShellScript "wikipedia-appload" ''
+    set -e
+    ZIM_DIR="/home/root/zim"
+    mkdir -p "$ZIM_DIR"
+
+    LOG="/home/root/wikipedia/wikipedia.log"
+    mkdir -p /home/root/wikipedia
+    exec >> "$LOG" 2>&1
+
+    echo "[wikipedia] Starting rmpp-wikipedia at $(date)..."
+    echo "[wikipedia] QTFB_KEY=''${QTFB_KEY:-none}"
+
+    cleanup() {
+      [ -n "''${WIKI_PID:-}" ] && kill "''${WIKI_PID}" 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
+
+    ZIM=$(find "$ZIM_DIR" -maxdepth 1 -name "*.zim" 2>/dev/null | head -n 1)
+    echo "[wikipedia] ZIM=''${ZIM:-none}"
+
+    export HOME="/home/root"
+    export QT_QUICK_BACKEND="software"
+
+    ${rmppWikipedia}/bin/rmpp-wikipedia \
+      -platform "vnc:size=1620x2160,port=5901" \
+      ''${ZIM:+"$ZIM"} >> "$LOG" 2>&1 &
+    WIKI_PID=$!
+
+    for i in $(seq 1 50); do
+      if netstat -tl 2>/dev/null | grep -q ':5901' || nc -z 127.0.0.1 5901 2>/dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    echo "[wikipedia] VNC server ready with PID $WIKI_PID; launching VNSee display bridge..."
+
+    if [ -x /home/root/xovi/exthome/appload/vnsee/vnsee ]; then
+      exec /home/root/xovi/exthome/appload/vnsee/vnsee 127.0.0.1 5901
+    else
+      echo "[wikipedia] ERROR: /home/root/xovi/exthome/appload/vnsee/vnsee not found"
+      wait "$WIKI_PID"
+    fi
+  '';
 in
 {
   options.rmpp = {
     android.enable = lib.mkEnableOption "the manual rmpp-android takeover service and AppLoad entry";
     chromium.enable = lib.mkEnableOption "the manual rmpp-chromium browser takeover service and AppLoad entry";
     kiwix.enable = lib.mkEnableOption "the Kiwix offline reader desktop app and AppLoad entry";
+    wikipedia.enable = lib.mkEnableOption "the native QML Wikipedia offline reader with direct libzim backend and AppLoad entry";
     xovi = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -464,8 +514,9 @@ in
       ++ lib.optionals cfg.kiwix.enable [
         pkgs.kiwix
         pkgs.kiwix-tools
-      ];
-    rmpp.systemd.services =
+      ]
+      ++ lib.optionals cfg.wikipedia.enable [ rmppWikipedia ];
+    rmpp.systemd.services = lib.mkMerge [
       (lib.mkIf cfg.android.enable {
         rmpp-android = {
           description = "Waydroid e-paper takeover";
@@ -481,7 +532,7 @@ in
           '';
         };
       })
-      // (lib.mkIf cfg.chromium.enable {
+      (lib.mkIf cfg.chromium.enable {
         rmpp-chromium = {
           description = "Chromium e-paper browser takeover";
           type = "simple";
@@ -495,8 +546,9 @@ in
             Delegate=yes
           '';
         };
-      });
-    rmpp.appload.apps =
+      })
+    ];
+    rmpp.appload.apps = lib.mkMerge [
       (lib.mkIf cfg.android.enable {
         rmpp-android = {
           name = "Android";
@@ -506,7 +558,7 @@ in
           qtfb = false;
         };
       })
-      // (lib.mkIf cfg.chromium.enable {
+      (lib.mkIf cfg.chromium.enable {
         rmpp-chromium = {
           name = "Chromium";
           application = "${rmppChromium}/bin/rmpp-chromium";
@@ -515,7 +567,7 @@ in
           qtfb = false;
         };
       })
-      // (lib.mkIf cfg.kiwix.enable {
+      (lib.mkIf cfg.kiwix.enable {
         kiwix = {
           name = "Kiwix";
           application = "${kiwixLauncher}";
@@ -528,8 +580,23 @@ in
             HOME = "/home/root";
           };
         };
-      });
-    rmpp.vellum.packages = lib.optionals cfg.kiwix.enable [ "vnsee-qtfb" ];
+      })
+      (lib.mkIf cfg.wikipedia.enable {
+        wikipedia = {
+          name = "Wikipedia";
+          application = "${wikipediaLauncher}";
+          icon = ./wikipedia-icon.png;
+          qtfb = true;
+          disablesWindowedMode = true;
+          environment = {
+            VNSEE_WAVEFORM_MODE = "STANDARD";
+            VNSEE_ENCODING = "COPYRECT";
+            HOME = "/home/root";
+          };
+        };
+      })
+    ];
+    rmpp.vellum.packages = lib.optionals (cfg.kiwix.enable || cfg.wikipedia.enable) [ "vnsee-qtfb" ];
     assertions = [
       {
         assertion = !cfg.android.enable || rmppAndroid != null;
@@ -542,6 +609,10 @@ in
       {
         assertion = !cfg.kiwix.enable || pkgs.kiwix != null;
         message = "rmpp.kiwix.enable requires pkgs.kiwix";
+      }
+      {
+        assertion = !cfg.wikipedia.enable || rmppWikipedia != null;
+        message = "rmpp.wikipedia.enable requires rmppWikipedia";
       }
       {
         assertion = lib.all safeRelativePath (lib.attrNames cfg.files);

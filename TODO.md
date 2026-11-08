@@ -541,9 +541,11 @@ option 1.
 
 ## Remaining tasks
 
-- [ ] Implement `rmpp-wikipedia` native Qt Quick reader with `libzim` C++ backend:
-      Eliminate `kiwix-serve` by compiling a `ZimBackend` QObject linked against `pkgs.libzim`,
-      replacing `XMLHttpRequest` in `dps/remarkable-wikipedia`, and integrating with `/home/root/zim/`.
+- [x] Implement `rmpp-wikipedia` native Qt Quick reader with `libzim` C++ backend (2026-11-08):
+      Eliminated `kiwix-serve` by compiling a `WikipediaBackend` QObject linked against `pkgs.libzim`,
+      replacing `XMLHttpRequest` in `dps/remarkable-wikipedia`, and integrating with `/home/root/zim/*.zim`.
+      Packaged in `wikipedia.nix`, added AppLoad tile with custom icon, built in OrbStack, deployed
+      and verified live on real Paper Pro tablet (`/nix/store/yriv13bardc47d4pcgx7jdjmvy01gy4c-rmpp-config-1`).
 - [ ] Test `kiwix-desktop` high-DPI scaling (`QT_SCALE_FACTOR=1.75`) and fullscreen geometry
       on real Paper Pro hardware via AppLoad tile.
 - [ ] Evaluate VKMS DRM writeback (`vkms_bridge.c` from `chiappa`) as an alternative to
