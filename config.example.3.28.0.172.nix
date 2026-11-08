@@ -84,10 +84,11 @@
     # in the activation manifest. Foreign or hand-installed tiles are never overwritten.
     appload.apps.rmweb = {
       name = "rmweb";
-      application = "/home/root/rmweb/rmweb";
+      application = "/home/root/rmweb/appload-entry.sh";
       environment = {
         RMWEB_ROOT = "/home/root/rmweb";
       };
+      disablesWindowedMode = true;
       qtfb = false;
     };
 

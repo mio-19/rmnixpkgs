@@ -51,10 +51,11 @@
     # the ID to the app as QTFB_KEY, which replaces the closed epaper QPA.
     appload.apps.rmweb = {
       name = "rmweb";
-      application = "/home/root/rmweb/rmweb";
+      application = "/home/root/rmweb/appload-entry.sh";
       environment = {
         RMWEB_ROOT = "/home/root/rmweb";
       };
+      disablesWindowedMode = true;
       qtfb = false;
     };
 
