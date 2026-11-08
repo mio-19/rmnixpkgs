@@ -93,23 +93,10 @@
       qtfb = false;
     };
 
-    # Kiwix desktop Qt application (https://github.com/kiwix/kiwix-desktop) under
-    # AppLoad via QTFB (https://github.com/asivery/rmpp-qtfb-shim):
-    # runs directly on the device with offline ZIM content without headless server services.
-    # Icon source: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/kiwix.svg
-    appload.apps.kiwix = {
-      name = "Kiwix";
-      application = "/home/root/kiwix/kiwix.sh";
-      icon = ./kiwix-icon.png;
-      qtfb = true;
-      environment = {
-        LD_PRELOAD = "/home/root/shims/qtfb-shim.so";
-        QTFB_SHIM_RESPECT_APP_REFRESH_MODES = "true";
-        QTFB_SHIM_RESPECT_FULL_REFRESH_REQUESTS = "true";
-        QTFB_SHIM_MODEL = "RM1";
-        HOME = "/home/root";
-      };
-    };
+    # Kiwix offline reader (kiwix-desktop) under AppLoad via QTFB.
+    # Set to true to install the Kiwix desktop app and AppLoad tile.
+    # Offline .zim archives are stored under /home/root/zim/.
+    # kiwix.enable = true;
 
     # -------------------------------------------------------------------------
     # Device packages (aarch64-linux closures from cache.nixos.org)
@@ -117,8 +104,6 @@
     # CLI utilities available on the tablet. These substitute directly from the
     # nixpkgs binary cache into the tablet's Nix store:
     packages = [
-      pkgs.kiwix
-      pkgs.kiwix-tools
       # pkgs.htop
       # pkgs.tmux
       # pkgs.rsync

@@ -232,11 +232,39 @@ let
     : > ${file}
     ${lib.optionalString (items != [ ]) ''printf '%s\n' ${lib.escapeShellArgs items} >> ${file}''}
   '';
+
+  # Kiwix desktop Qt launcher: runs directly on the device with offline ZIM content
+  # through AppLoad's QTFB shared framebuffer integration (qtfb-shim.so), without
+  # requiring a headless web server daemon.
+  kiwixLauncher = pkgs.writeShellScript "kiwix-appload" ''
+    set -u
+    ZIM_DIR="/home/root/zim"
+    mkdir -p "$ZIM_DIR"
+
+    LOG="/home/root/kiwix/kiwix.log"
+    mkdir -p /home/root/kiwix
+    exec > "$LOG" 2>&1
+
+    echo "[kiwix] Starting at $(date)..."
+    echo "[kiwix] QTFB_KEY=''${QTFB_KEY:-none}"
+
+    ZIM=$(find "$ZIM_DIR" -maxdepth 1 -name "*.zim" 2>/dev/null | head -n 1)
+    echo "[kiwix] ZIM=''${ZIM:-none}"
+
+    export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:''${LD_LIBRARY_PATH:-}"
+    export LD_PRELOAD="/home/root/shims/qtfb-shim.so"
+    export QT_QPA_PLATFORM="linuxfb"
+    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage"
+    export HOME="/home/root"
+
+    exec ${pkgs.kiwix}/bin/kiwix-desktop ''${ZIM:+"$ZIM"}
+  '';
 in
 {
   options.rmpp = {
     android.enable = lib.mkEnableOption "the manual rmpp-android takeover service and AppLoad entry";
     chromium.enable = lib.mkEnableOption "the manual rmpp-chromium browser takeover service and AppLoad entry";
+    kiwix.enable = lib.mkEnableOption "the Kiwix offline reader desktop app and AppLoad entry";
     files = lib.mkOption {
       type = lib.types.attrsOf fileModule;
       default = { };
@@ -389,7 +417,11 @@ in
   config = {
     rmpp.packages =
       lib.optionals cfg.android.enable [ rmppAndroid ]
-      ++ lib.optionals cfg.chromium.enable [ rmppChromium ];
+      ++ lib.optionals cfg.chromium.enable [ rmppChromium ]
+      ++ lib.optionals cfg.kiwix.enable [
+        pkgs.kiwix
+        pkgs.kiwix-tools
+      ];
     rmpp.systemd.services =
       (lib.mkIf cfg.android.enable {
         rmpp-android = {
@@ -439,6 +471,21 @@ in
           icon = rmppChromiumIcon;
           qtfb = false;
         };
+      })
+      // (lib.mkIf cfg.kiwix.enable {
+        kiwix = {
+          name = "Kiwix";
+          application = "${kiwixLauncher}";
+          icon = ./kiwix-icon.png;
+          qtfb = true;
+          environment = {
+            LD_PRELOAD = "/home/root/shims/qtfb-shim.so";
+            QTFB_SHIM_RESPECT_APP_REFRESH_MODES = "true";
+            QTFB_SHIM_RESPECT_FULL_REFRESH_REQUESTS = "true";
+            QTFB_SHIM_MODEL = "RM1";
+            HOME = "/home/root";
+          };
+        };
       });
     assertions = [
       {
@@ -448,6 +495,10 @@ in
       {
         assertion = !cfg.chromium.enable || rmppChromium != null;
         message = "rmpp.chromium.enable requires the runtime package";
+      }
+      {
+        assertion = !cfg.kiwix.enable || pkgs.kiwix != null;
+        message = "rmpp.kiwix.enable requires pkgs.kiwix";
       }
       {
         assertion = lib.all safeRelativePath (lib.attrNames cfg.files);
