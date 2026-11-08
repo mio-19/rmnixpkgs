@@ -7,6 +7,7 @@
 # The reMarkable OS release this configuration is for is selected by
 # `rmpp.os.version` ("3.27" or "3.28", default "3.28"): the kernel source pin,
 # device trees, and userland ABI derive from os.nix for the chosen release.
+{ pkgs, ... }:
 {
   rmpp = {
     # Target reMarkable OS firmware release ("3.27" or "3.28").
@@ -59,10 +60,31 @@
       qtfb = false;
     };
 
+    # Kiwix desktop Qt application (https://github.com/kiwix/kiwix-desktop) under
+    # AppLoad via QTFB (https://github.com/asivery/rmpp-qtfb-shim):
+    # runs directly on the device with offline ZIM content without headless server services.
+    # Icon source: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/kiwix.svg
+    appload.apps.kiwix = {
+      name = "Kiwix";
+      application = "/home/root/kiwix/kiwix.sh";
+      icon = ./kiwix-icon.png;
+      qtfb = true;
+      environment = {
+        LD_PRELOAD = "/home/root/shims/qtfb-shim.so";
+        QTFB_SHIM_RESPECT_APP_REFRESH_MODES = "true";
+        QTFB_SHIM_RESPECT_FULL_REFRESH_REQUESTS = "true";
+        QTFB_SHIM_MODEL = "RM1";
+        HOME = "/home/root";
+      };
+    };
+
     # Packages exposed on the generation's PATH. CallPackage'd from the flake's
     # aarch64 set, e.g. `pkgs.tmux`, so they are the same cached derivations the
     # other packages here use.
-    packages = [ ];
+    packages = [
+      pkgs.kiwix
+      pkgs.kiwix-tools
+    ];
 
     # Vellum packages, declared the way nix-darwin declares Homebrew ones
     # (https://github.com/nix-darwin/nix-darwin/blob/master/modules/homebrew.nix).

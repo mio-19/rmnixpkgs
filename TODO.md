@@ -16,6 +16,21 @@ to the vendor 6.12.49-waydroid kernel). The 6.12.49-waydroid kernel and declarat
 configuration are now live, active, and verified on real tablet hardware running
 reMarkable OS 3.28.0.172 on Slot B.
 
+## Kiwix Native Qt Desktop Deployment & Validation (2026-11-08)
+
+- **Native Kiwix Qt Desktop (`kiwix-desktop` 2.5.1):**
+  - Upstream: `https://github.com/kiwix/kiwix-desktop` built with `qt6.qtwebengine`, `libkiwix 14.2.1`, `libzim 9.8.2`.
+  - Built natively for `aarch64-linux` (`pkgs.kiwix` / `kiwix-2.5.1`) via nixpkgs.
+  - Substituted and copied 154-path closure into the reMarkable Paper Pro Nix store (`/nix/store/iax2x9sv594d90qrqkc6wjy7nxi69jk4-kiwix-2.5.1`).
+  - Runs natively without headless server daemons: configured with `--no-sandbox` (required for running as root), software GL fallback (`--disable-gpu`), and QTFB integration via `qtfb-shim.so`.
+- **AppLoad & QTFB Integration:**
+  - Registered AppLoad external application tile `kiwix` in `config.nix` with official vector icon (`kiwix-icon.png`).
+  - Manifest configured with `"qtfb": true`, `QTFB_SHIM_MODEL="RM1"`, `QTFB_SHIM_RESPECT_APP_REFRESH_MODES="true"`, and `QTFB_SHIM_RESPECT_FULL_REFRESH_REQUESTS="true"`.
+  - Launcher script `/home/root/kiwix/kiwix.sh` automatically detects `.zim` archives under `/home/root/zim/` and launches `kiwix-desktop` directly into the e-ink display.
+  - Tested opening `/home/root/zim/alpinelinux.zim` on real device.
+- **Kiwix Tools CLI (`kiwix-tools` 3.8.2):**
+  - `kiwix-tools` added to `rmpp.packages` exposing `kiwix-search`, `kiwix-manage`, and `kiwix-serve` on system PATH (`/home/root/.rmpp/current/bin/`).
+
 ## Firmware 3.28 Deployment & Device Validation (2026-11-08)
 
 - **Multi-Firmware Support (3.27 & 3.28):** `os.nix` now houses a release registry
