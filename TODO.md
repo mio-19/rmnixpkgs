@@ -192,69 +192,6 @@ been implemented locally; tablet hardware validation remains open.
   private-root lifecycle. Device bring-up still requires a kernel backup and
   the documented A/B fallback; upstream architecture prose is not a device test.
 
-## Done
-
-- [x] `flake.nix` + `flake.lock`: nixpkgs (`nixos-unstable`), flake-parts,
-      `android-on-remarkable-paper-pro` input (non-flake, files only);
-      `nixConfig` declares `cache.nixos.org` + public key and
-      `extra-platforms = aarch64-linux`.
-- [x] `aarch64-pkgs.nix`: the one place the native aarch64 package
-      set is defined (`import pkgs.path { system = "aarch64-linux"; }`), with
-      the cache-hit rationale documented there.
-- [x] `wpewebkit.nix`: WPE WebKit 2.48.5 from the upstream
-      tarball, upstream's configure flags, nixpkgs deps, `-latomic` for the A53.
-- [x] `rmweb.nix`: `rmweb-wpeqt` from tag `v0.9.7` against
-      nixpkgs Qt 6 + that engine; upstream's device tree, Readability JS, and a
-      wrapper carrying the runtime env (no `LD_LIBRARY_PATH`; the device tree is
-      a `/home/root` copy because the launcher writes `.lock`/`rmweb.log`).
-- [x] Mesa: nixpkgs `mesa` (llvmpipe/swrast, surfaceless EGL) instead of
-      upstream's `build/stage-mesa`.
-- [x] `default.nix`: `rmpp_android_tools` (native cached aarch64
-      Waydroid/compositor/container utilities), `rmpp_android` (session
-      controller + einkbridge + Quill on top of it) + `rmpp_android_files`
-      (kernel fragment, GPU DT patch, scripts, units, theme verbatim).
-- [x] Activation checks: compares `/etc/version` (major.minor) and `uname -r`
-      against the generation's `os` file and warns on a mismatch instead of
-      aborting the boot; masks reMarkable's OTA updater
-      (`rmpp.osUpdates.disable`, `update-engine.service` /
-      `updatedb.service`) with `systemctl mask`'s /dev/null symlink; and after
-      `vellum add` verifies the declared packages against vellum's apk database
-      (`/home/root/.vellum/lib/apk/db/installed`, `P:<name>` lines), reporting
-      anything missing. The check logic was exercised off-device against fake
-      `/etc/version`, `uname -r` and apk database; it has not run on the tablet
-      yet, and `update-engine.service` / `updatedb.service` are still only
-      assumed to be this OS's updater unit names.
-- [x] `os.nix`: one declaration of the target reMarkable OS release — 3.28,
-      glibc 2.39, xochitl's Qt 6.10.3, kernel 6.12.49 from branch
-      `rmpp_6.12.49_v3.27.x`. `kernel.nix` builds from it, `system.nix` records it
-      as `$out/os` (`version=` / `glibc=` / `qt=` / `kernel-version=`) and
-      activation logs it. Nothing knows about a release newer than 3.28: the
-      next OS update starts by editing this file, then rebuilding `rmpp_kernel`.
-- [x] `system.nix` + `config.nix` + `activate.sh`: system-manager-style
-      declarative configuration — generations in the store, activation that owns
-      only its manifest, a boot unit that re-applies it, and unit names asserted
-      to `rmpp-*` so it cannot fight XOVI/vellum units. Includes
-      `rmpp.vellum` (a nix-darwin-Homebrew-shaped package list).
-- [x] `kernel.nix`: `rmpp_kernel` — reMarkable's published 6.12.49
-      source + upstream's `ferrari_defconfig`/`waydroid.cfg` recipe +
-      `gpu-etnaviv-dt.patch`, producing fitImage, Image, dtbs and a modules
-      tarball in the shape `install-kernel.sh` expects.
-- [x] Kernel security updates: `os.nix` pins the whole upstream stable chain
-      (66 incremental patches, 6.12.49 → 6.12.115, one SRI hash each) and
-      `kernel.nix` applies it before the GPU patch,
-      `--forward --fuzz=2`, best effort because the vendor tree has drifted.
-      `rmpp.kernel.securityPatches.enable` (config.nix) is the switch;
-      `default.nix` records 6.12.115 as the kernel release when it is on, and
-      activation compares `uname -r` against 6.12.115-waydroid. The build
-      prints what applied and ships the rejects.
-      **Compiled on aarch64 with the switch on**: the tree builds at
-      6.12.115-waydroid after carrying the port described below; the switch
-      remains **off** in config.nix pending device verification.
-- [x] `nixfmt` clean; every package evaluates (`nix eval .#…drvPath`);
-      `.#rmpp_tools` verified to substitute from cache.nixos.org (aarch64 ELF).
-- [x] Docs: `remarkable-paper-pro.md` covers the flake, the source build and the
-      Android adaptation.
-
 ## Verified facts (don't re-research)
 
 ### Builds on aarch64 (verified)
@@ -507,6 +444,14 @@ orb -m nixos bash -lc 'export NIX_CONFIG="experimental-features = nix-command fl
   The wrapper lives at `/home/root/.vellum/bin/vellum` and is an apk build, so
   the apk database — not Nix — stays the truth for what is installed.
 
+### KOReader upstream & build findings (deferred)
+
+- **Architecture & Target**: KOReader consists of the Lua frontend (`koreader/koreader`) and a C/C++ native backend (`koreader/koreader-base`) containing ~30 submodules and third-party libraries (MuPDF, CREngine, DjVuLibre, LuaJIT, Leptonica, libk2pdfopt, HarfBuzz, FreeType, etc.).
+- **Paper Pro Target**: The 64-bit ARM target for the Paper Pro is `TARGET=remarkable-aarch64` (`ARM64_A53_ARCH = -march=armv8-a+crc+crypto -mtune=cortex-a53`), using `make/remarkable-aarch64.mk`.
+- **Toolchain & Container**: Official builds use `./kodev release remarkable-aarch64` via the `koreader/koremarkable` container (`aarch64-remarkable-linux-gnu-gcc 14.4.0` via crosstool-NG). The Docker image is `linux/amd64` on Docker Hub, running via Rosetta emulation on Apple Silicon OrbStack.
+- **Why Pure Nix Build is Complex**: `koreader-base` uses CMake custom targets (`download-all`) that download tarballs during the build phase over the network. In the Nix sandbox, internet access is strictly disabled; building natively from source in pure Nix would require fetching, patching, and packaging each of the 30 third-party submodules independently.
+- **Current Status**: Deferred. KOReader remains managed via Vellum (`vellum add koreader`, located under `/home/root/xovi/exthome/appload/koreader/` with `"qtfb": true`), which runs reliably.
+
 ## Open: the display path (the only thing between the source build and a panel)
 
 `libepaper.so` is closed source and built against **Qt 6.10.3**; a QPA plugin is
@@ -538,49 +483,20 @@ option 1.
 
 ## Remaining tasks
 
-- [ ] Decide the display path above.
-- [x] Build `.#rmpp_rmweb` on aarch64 hardware and check the closure:
-      sonames (none unresolved), RUNPATH (store paths + `$ORIGIN/../lib`),
-      wrapper env. See "Builds on aarch64 (verified)".
-- [ ] Test on device: `nix copy` the closure, copy the tree to
-      `/home/root/rmweb`, `install.sh`, page turns, downloads, AppLoad icon.
-- [ ] Validate the local Waydroid implementation on the
-      device: `labwc` start, Waydroid bring-up, GPU
-      (mesa's etnaviv drivers are linked into `$env/lib/dri`).
-- [x] Build `.#rmpp_kernel` on aarch64 hardware and check the output: fitImage,
-      Image, dtbs, `CONFIG_DRM_ETNAVIV=m`, patched ferrari dtb — both without
-      the chain (6.12.49-waydroid) and with it (**6.12.115-waydroid**, opt-in). See "Builds on aarch64 (verified)".
-- [x] Port the stable chain so it compiles: the eight patched files above, the
-      derived syscore revert, the switch on, and a clean Nix build at
-      6.12.115-waydroid.
-- [ ] Audit the 163 raw-chain rejected hunks if any of them matters for this
-      device: `share/rmpp-kernel/security-patch-rejects` is the list, and each
-      needs assessment against the eight existing ports (mostly imx8-isi/enetc/fsl-edma,
-      which this device does not use).
-- [ ] Flash the kernel on a device (after the backup) and verify
-      `/dev/dri/renderD128` appears, `etnaviv` is in dmesg, and Mesa's etnaviv
-      driver loads; then check whether rmweb can use it
-      (`WEBKIT_SKIA_ENABLE_CPU_RENDERING=0`, `LIBGL_ALWAYS_SOFTWARE=0`) — the
-      rmweb research warns GPU painting may not beat llvmpipe on e-ink.
-- [ ] Keep the kernel source branch in step with the installed OS version
-      (`/etc/version`); the pinned tarball is 3.27.x.
-- [ ] Test `rmpp-config` on device: `--install-boot-unit` (with vellum's
-      `mount-utils` present, and without), reboot, confirm units/files/AppLoad
-      entry come back, confirm vellum's own packages still work, then
-      `vellum reenable` after an OS update and re-run the install.
-- [ ] Give the `rmweb` AppLoad entry an `icon.png` (AppLoad shows a blank tile
-      without it), and flip `qtfb = true` in `config.nix` once rmweb speaks QTFB.
+- [ ] Decide the display path for source-built `rmweb`: add a QTFB present/input
+      path or a Wayland session (`labwc`) to allow dropping `rmpp_rmweb_prebuilt`.
+- [ ] Validate the local Waydroid implementation on the device: `labwc` start,
+      Waydroid container session, physical input through Wayland, and quill vendor worker.
+- [ ] Audit the 163 raw-chain rejected hunks if enabling the security patch chain
+      at 6.12.115-waydroid (`rmpp.kernel.securityPatches.enable = true`).
 - [ ] Ship a vellum-compatible `post-os-upgrade` story: either publish the boot
       unit as an `.apk` in a vellum repo, or document the manual re-enable step
-      next to `vellum reenable` (currently documented only).
-- [ ] Drop `rmpp_rmweb_prebuilt` once the source build renders on device.
+      next to `vellum reenable`.
 - [ ] Keep hashes current: `wpewebkit.nix` (tarball) and the `v0.9.7` tag
       (`fetchFromGitHub`), plus upstream's bundle while it is still shipped.
-- [x] Update `TODO.md`/commit as each item lands; do not hand-edit generated
-      files; `nixfmt` every `.nix` touched. (Today's landing: mark the two source
-      builds and the chain-compile done, and align the docs with what this host
-      has verified. Limitations recorded: no device test, no re-render, 163
-      raw-chain rejects still open.)
+- [ ] KOReader source compilation (deferred): design an offline Nix derivation
+      or packaging recipe for `koreader-remarkable-aarch64` without relying on
+      network-dependent CMake downloads.
 
 ## How to resume
 
