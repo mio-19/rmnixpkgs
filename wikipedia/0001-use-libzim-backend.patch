@@ -1,0 +1,248 @@
+diff --git a/main.cpp b/main.cpp
+index 76adee0..70570b5 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -1,43 +1,35 @@
+ #include <QGuiApplication>
+ #include <QQmlApplicationEngine>
+-// Added for reMarkable support
+-#include <QtPlugin>
+-#ifdef __arm__
+-Q_IMPORT_PLUGIN(QsgEpaperPlugin)
+-#endif
+-// end reMarkable additions
++#include <QQmlContext>
++#include <QQuickItem>
+ #include <QtDBus>
+ 
+-#include "eventfilter.h"
++#include "wikipedia-backend.h"
+ 
+ using namespace std;
+ 
+ int main(int argc, char *argv[])
+ {
+-    //  QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+-    // Added for reMarkable support
+-#ifdef __arm__
+-    qputenv("QMLSCENE_DEVICE", "epaper");
+-    qputenv("QT_QPA_PLATFORM", "epaper:enable_fonts");
+-    qputenv("QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS", "rotate=180");
+-    qputenv("QT_QPA_GENERIC_PLUGINS", "evdevtablet");
+-#endif
+-    // end reMarkable additions
++    qputenv("QT_QUICK_BACKEND", "software");
+ 
+     QGuiApplication app(argc, argv);
+-    auto filter = new EventFilter(&app);
+     app.setOrganizationName("dps");
+     app.setOrganizationDomain("io.singleton.wikipedia");
+     app.setApplicationName("wikipedia");
+     app.setApplicationDisplayName("wikipedia");
+-    app.installEventFilter(filter);
++
++    WikipediaBackend backend;
++    if (argc > 1) {
++        backend.openArchive(QString::fromUtf8(argv[1]));
++    } else {
++        backend.autoOpen();
++    }
+ 
+     QQmlApplicationEngine engine;
++    engine.rootContext()->setContextProperty("zimBackend", &backend);
+     engine.load(QUrl(QStringLiteral("qrc:/main.qml")));
+     if (engine.rootObjects().isEmpty())
+         return -1;
+-    QObject* root = engine.rootObjects().first();
+-    filter->root = (QQuickItem*)root;
+ 
+     return app.exec();
+ }
+diff --git a/main.qml b/main.qml
+index 7df12b4..f74c1e4 100644
+--- a/main.qml
++++ b/main.qml
+@@ -5,11 +5,11 @@ import "."
+ Window {
+     visible: true;
+     title: qsTr("qtwikipedia")
+-    width: 1404;
+-    height: 1872;
++    width: 1620;
++    height: 2160;
+ 
+     property bool localZimMode: true;
+-    property string edition: "fb92b95d083f0cb6a2a17794cf164156"; //"wikipedia_en_simple_all_nopic_2019-05";
++    property string edition: "wikipedia";
+     property string homePage: "";
+     readonly property int dummy: onLoad();
+     property var backStack: [];
+@@ -26,56 +26,25 @@ Window {
+ 
+     function onLoad() {
+         log.text = "<h1>reMarkable Wikipedia</h1>";
+-
+-        if (homePage !== "") {
+-            return 0;
+-        }
+-        //loadIndexFile();
+-
+-        var doc = new XMLHttpRequest();
+-        doc.onreadystatechange = function() {
+-            if (doc.readyState == XMLHttpRequest.DONE) {
+-                var a = doc.responseText;
+-                var reg = '<a href="\/([^\/]*)\/A\/([^\/"]*)">Found<\/a>';
+-                var m = a.match(reg);
+-                if (!m) {
+-                    localZimMode = false;
+-                    loadIndexFile();
+-                    return;
+-                }
+-                edition = a.match(reg)[1];
+-                homePage = a.match(reg)[2];
+-                goHome();
++        if (typeof zimBackend !== "undefined" && zimBackend.hasArchive) {
++            homePage = zimBackend.mainPage;
++            if (!homePage || homePage === "") {
++                homePage = "Main_Page";
+             }
++            goHome();
+         }
+-        doc.onerror = function() {
+-            localZimMode = false;
+-            loadIndexFile();
+-        }
+-
+-        doc.open("GET", "http://127.0.0.1:8081/");
+-        doc.send();
+         return 0;
+     }
+ 
+     function loadIndexFile() {
+         log.y = 100;
+-        log.text = "Fetching..."
+-
+-        var doc = new XMLHttpRequest();
+-        doc.onreadystatechange = function() {
+-            if (doc.readyState == XMLHttpRequest.DONE) {
+-                var a = doc.responseText;
+-                showRequestInfo(a);
+-                log.forceActiveFocus();
+-            }
+-        }
+-        if (localZimMode) {
+-          doc.open("GET", "http://127.0.0.1:8081/" + edition + "/A/" + homePage);
+-        } else {
+-          doc.open("GET", "https://en.wikipedia.org/api/rest_v1/page/html/Main_Page");
++        if (typeof zimBackend !== "undefined" && zimBackend.hasArchive) {
++            var a = zimBackend.getArticleHtml(homePage);
++            showRequestInfo(a);
++            log.forceActiveFocus();
++            return;
+         }
+-        doc.send();
++        log.text = "<h1>No ZIM Archive Found</h1><p>Place a Wikipedia <code>.zim</code> file in <b>/home/root/zim/</b>.</p>";
+     }
+ 
+     function showRequestInfo(text) {
+@@ -141,74 +110,25 @@ Window {
+ 
+     function retrieve(page) {
+         log.y = 100;
+-        log.text = "Fetching...";
+-
+-        var doc = new XMLHttpRequest();
+-        doc.onreadystatechange = function() {
+-            if (doc.readyState == XMLHttpRequest.DONE) {
+-                log.text = "Rendering..."
+-                var a = doc.responseText;
+-                if (localZimMode) {
+-                    if (edition == "wikipedia" || edition == "1f98c4ecc0d71bc828dc40533d33c426") {
+-                        a = a.substr(a.indexOf("<a id=\"top\"></a>"));
+-                    } else {
+-                        a = a.substr(a.indexOf("<div id=\"bodyContent\""));
+-                    }
+-                }
+-                showRequestInfo(a);
+-            }
+-        }
+-        var url;
+-        if (localZimMode) {
+-            url = "http://127.0.0.1:8081/" + edition + "/A/" + encodeURIComponent(page);
+-            if (page.indexOf(edition) > 0) {
+-                url = "http://127.0.0.1:8081" + page;
+-            }
+-
+-            if ((url.indexOf(".html") < 0) && edition == "wikipedia") {
+-                url += ".html";
+-            }
+-        } else {
+-            if (page.startsWith("//")) {
+-                url = "http:" + page;
+-            } else if (page.startsWith("http")) {
+-                url = page;
+-            } else {
+-                url = "https://en.wikipedia.org/api/rest_v1/page/mobile-html/" + encodeURIComponent(page);
+-            }
++        if (typeof zimBackend !== "undefined" && zimBackend.hasArchive) {
++            var a = zimBackend.getArticleHtml(page);
++            showRequestInfo(a);
++            return;
+         }
+-
+-
+-        doc.open("GET", url);
+-        doc.send();
++        log.text = "<h1>No ZIM Archive Found</h1>";
+     }
+ 
+     function refreshSuggest() {
+-        var doc = new XMLHttpRequest();
+-        doc.onreadystatechange = function() {
+-            if (doc.readyState == XMLHttpRequest.DONE) {
+-                if (localZimMode) {
+-                    var a = doc.responseText;
+-                    showRequestInfo(a);
+-                } else {
+-                    var json = JSON.parse(doc.responseText);
+-                    var a = "";
+-                    for (var i in json.query.pages) {
+-                        var page = json.query.pages[i];
+-                        a = a + "<a href='./" + page.title + "'><h2>" + page.title + "</h2><p>" + (page.description || "") + "</p></a>";
+-                    }
+-                    showRequestInfo(a);
+-                }
++        if (typeof zimBackend !== "undefined" && zimBackend.hasArchive) {
++            var list = zimBackend.getSuggestions(query.text, 8);
++            var a = "<h2>Suggestions:</h2>";
++            for (var i = 0; i < list.length; i++) {
++                var p = list[i];
++                a = a + "<a href='./" + p.path + "'><h2>" + p.title + "</h2></a>";
+             }
++            showRequestInfo(a);
++            return;
+         }
+-
+-        if (localZimMode) {
+-          doc.open("GET", "http://127.0.0.1:8081/" + edition + "/A/" + query.text);
+-        } else {
+-          doc.open("GET", "https://en.wikipedia.org/w/api.php?action=query&format=json&generator=prefixsearch&prop=description&redirects=&gpsnamespace=0&gpslimit=6&gpssearch=" + encodeURIComponent(query.text));
+-        }
+-
+-        doc.send();
+     }
+ 
+     SwipeArea {
+@@ -284,10 +204,11 @@ Window {
+                 }
+         Rectangle {
+             id: qbox;
+-            width: 1190;
++            width: parent.width - backbox.width - downbox.width - 40;
+             height: 80;
+             y: 5;
+             anchors.left: backbox.right;
++            anchors.leftMargin: 10;
+             color: "white";
+             border.color: "black";
+             border.width: 3;

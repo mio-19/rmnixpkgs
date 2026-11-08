@@ -39,6 +39,9 @@
         "home.mount"
         "nix.mount"
       ];
+      before = [
+        "xochitl.service"
+      ];
       wantedBy = "multi-user.target";
     };
 

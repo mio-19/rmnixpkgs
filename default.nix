@@ -86,7 +86,7 @@
             else
               osForKernel.kernel.version;
         in
-        rmppPkgs.callPackage ./kernel.nix {
+        rmppPkgs.callPackage ./kernel/kernel.nix {
           # Use GCC 13 matching the device's native Yocto scarthgap toolchain (GCC 13.4.0)
           # to avoid experimental GCC 16 codegen/relocation breakages in arm64 early boot.
           stdenv = rmppPkgs.gcc13Stdenv;
@@ -172,13 +172,13 @@
               src = lib.fileset.toSource {
                 root = ./.;
                 fileset = lib.fileset.unions [
-                  ./android.py
-                  ./test-android.py
+                  ./android/android.py
+                  ./android/test-android.py
                 ];
               };
             }
             ''
-              python3 $src/test-android.py 2>&1 | tee $out
+              python3 $src/android/test-android.py 2>&1 | tee $out
             '';
         rmpp_quill_boundary =
           rmppPkgs.runCommandCC "rmpp-quill-boundary-check"
@@ -190,14 +190,14 @@
               buildInputs = [ config.packages.rmpp_quill.qtbase ];
             }
             ''
-              $CXX -fPIC -shared ${./test-quill-vendor.cpp} $(pkg-config --cflags --libs Qt6Core Qt6Gui) -o vendor.so
+              $CXX -fPIC -shared ${./bridge/test-quill-vendor.cpp} $(pkg-config --cflags --libs Qt6Core Qt6Gui) -o vendor.so
               TEST_REAL_QUILL=1 LD_LIBRARY_PATH=${
                 lib.makeLibraryPath [
                   config.packages.rmpp_quill.qtbase
                   rmppPkgs.stdenv.cc.cc.lib
                 ]
               } \
-                python3 ${./test-quill-host.py} ${rmppPkgs.glibc}/lib/ld-linux-aarch64.so.1 \
+                python3 ${./bridge/test-quill-host.py} ${rmppPkgs.glibc}/lib/ld-linux-aarch64.so.1 \
                   ${config.packages.rmpp_einkbridge}/libexec/rmpp-quill-host "$PWD/vendor.so" \
                   ${config.packages.rmpp_quill}/lib/libquill.so > $out
             '';
@@ -210,7 +210,7 @@
               ];
             }
             ''
-              sh ${./test-einkbridge-session.sh} ${config.packages.rmpp_android_tools} ${config.packages.rmpp_einkbridge} > $out
+              sh ${./bridge/test-einkbridge-session.sh} ${config.packages.rmpp_android_tools} ${config.packages.rmpp_einkbridge} > $out
             '';
         # Validate the actual kernel output; successful compilation alone does
         # not prove that olddefconfig retained Android's required settings.
@@ -223,10 +223,10 @@
               ];
             }
             ''
-              python3 ${./check-waydroid-kernel.py} ${upstream}/kernel/waydroid.cfg ${rmpp_kernel} > $out
+              python3 ${./kernel/check-waydroid-kernel.py} ${upstream}/kernel/waydroid.cfg ${rmpp_kernel} > $out
             '';
         rmpp_waydroid_runtime = rmppPkgs.runCommand "rmpp-waydroid-runtime-check" { } ''
-          sh ${./check-waydroid-runtime.sh} ${config.packages.rmpp_android_tools} > $out
+          sh ${./android/check-waydroid-runtime.sh} ${config.packages.rmpp_android_tools} > $out
         '';
       };
 
@@ -273,12 +273,12 @@
           };
         };
 
-        # The browser from source: rmweb's Qt app (rmweb.nix) against a WPE
-        # WebKit compiled here from the wpewebkit.org tarball (wpewebkit.nix),
+        # The browser from source: rmweb's Qt app (browser/rmweb.nix) against a WPE
+        # WebKit compiled here from the wpewebkit.org tarball (browser/wpewebkit.nix),
         # instead of upstream's prebuilt release bundle.
         # nix build .#rmpp_rmweb
-        rmpp_rmweb = rmppPkgs.callPackage ./rmweb.nix {
-          wpewebkit = rmppPkgs.callPackage ./wpewebkit.nix { };
+        rmpp_rmweb = rmppPkgs.callPackage ./browser/rmweb.nix {
+          wpewebkit = rmppPkgs.callPackage ./browser/wpewebkit.nix { };
         };
 
         # Upstream's release bundle (https://github.com/exp78/rmweb), unchanged
@@ -337,7 +337,7 @@
         # nixpkgs aarch64-linux packages that cache.nixos.org already serves
         # (no SDK, no cross compiler), with upstream's device files alongside.
         # Mesa is here for the tablet's Vivante GPU, which only works once
-        # rmpp_kernel (kernel.nix) is installed.
+        # rmpp_kernel (kernel/kernel.nix) is installed.
         # rmpp_android below layers the session controller and bridge on it.
         rmpp_android_tools = pkgs.buildEnv {
           name = "rmpp-android-tools";
@@ -382,28 +382,28 @@
         # The original einkbridge Rust entry points are absent from the pinned
         # upstream (and its forks), see
         # https://github.com/MaximeRivest/android-on-remarkable-paper-pro/issues/1
-        # Our replacement bridge/session implementation is in einkbridge.c
-        # and android.py; upstream scripts remain reference material only.
+        # Our replacement bridge/session implementation is in bridge/einkbridge.c
+        # and android/android.py; upstream scripts remain reference material only.
         # nix build .#rmpp_android -o rmpp-android
         # nix copy --to 'ssh://root@10.11.99.1?remote-program=/nix/var/nix/profiles/default/bin/nix-store' ./rmpp-android
-        rmpp_android = rmppPkgs.callPackage ./android.nix {
+        rmpp_android = rmppPkgs.callPackage ./android/android.nix {
           inherit os kernelVersion;
           tools = config.packages.rmpp_android_tools;
           bridge = config.packages.rmpp_einkbridge;
           quill = config.packages.rmpp_quill;
         };
 
-        rmpp_chromium = rmppPkgs.callPackage ./chromium.nix {
+        rmpp_chromium = rmppPkgs.callPackage ./browser/chromium.nix {
           inherit os;
           quill = config.packages.rmpp_quill;
           chromium = rmppPkgs.chromium;
         };
 
-        rmpp_wikipedia = rmppPkgs.callPackage ./wikipedia.nix { };
+        rmpp_wikipedia = rmppPkgs.callPackage ./wikipedia/wikipedia.nix { };
 
-        rmpp_einkbridge = rmppPkgs.callPackage ./einkbridge.nix { inherit os; };
+        rmpp_einkbridge = rmppPkgs.callPackage ./bridge/einkbridge.nix { inherit os; };
 
-        rmpp_quill = rmppPkgs.callPackage ./quill.nix { inherit os; };
+        rmpp_quill = rmppPkgs.callPackage ./bridge/quill.nix { inherit os; };
 
         # Upstream's device files on their own, for reference or a hand-built
         # install: kernel fragment, GPU DT patch, scripts, units, theme.

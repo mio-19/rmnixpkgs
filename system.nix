@@ -68,6 +68,11 @@ let
         type = lib.types.listOf lib.types.str;
         default = [ "home.mount" ];
       };
+      before = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "Units this service must start before.";
+      };
       wantedBy = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = "multi-user.target";
@@ -178,6 +183,7 @@ let
       Description=${description}
       ${lib.concatMapStringsSep "\n" (x: "After=${x}") value.after}
       ${lib.concatMapStringsSep "\n" (x: "Wants=${x}") value.wants}
+      ${lib.concatMapStringsSep "\n" (x: "Before=${x}") value.before}
 
       [Service]
       Type=${value.type}
@@ -571,7 +577,7 @@ in
         kiwix = {
           name = "Kiwix";
           application = "${kiwixLauncher}";
-          icon = ./kiwix-icon.png;
+          icon = ./assets/kiwix-icon.png;
           qtfb = true;
           disablesWindowedMode = true;
           environment = {
@@ -585,7 +591,7 @@ in
         wikipedia = {
           name = "Wikipedia";
           application = "${wikipediaLauncher}";
-          icon = ./wikipedia-icon.png;
+          icon = ./wikipedia/icon.png;
           qtfb = true;
           disablesWindowedMode = true;
           environment = {

@@ -36,6 +36,28 @@ reMarkable OS 3.28.0.172 on Slot B.
 - **Kiwix Tools CLI (`kiwix-tools` 3.8.2):**
   - `kiwix-tools` added to `rmpp.packages` exposing `kiwix-search`, `kiwix-manage`, and `kiwix-serve` on system PATH (`/home/root/.rmpp/current/bin/`).
 
+## Modular Directory Reorganization & Clean Upstream Patching (2026-11-08)
+
+- **Repository Structure Modularized:**
+  - Segregated root files into dedicated component directories:
+    - `android/`: Waydroid takeover, session controller, container runtime tools, and test suites (`android.nix`, `android.py`, `check-waydroid-runtime.sh`, `test-android.py`).
+    - `assets/`: Graphical assets and application icons (`kiwix-icon.png`, `kiwix.svg`).
+    - `bridge/`: Wayland screencopy bridge (`einkbridge.nix`, `einkbridge.c`, `einkbridge-wire.h`) and isolated Quill vendor worker (`quill-host.c`, `quill.nix`, tests).
+    - `browser/`: Web browsers on e-ink: Chromium CDP driver & viewer (`chromium.nix`), WPE WebKit (`wpewebkit.nix`), and rmweb (`rmweb.nix`).
+    - `kernel/`: Kernel derivation (`kernel.nix`), hardware patches, security patch chain, and config verification (`check-waydroid-kernel.py`).
+    - `wikipedia/`: Native Qt Quick offline Wikipedia reader (`rmpp-wikipedia`) with libzim C++ backend (`wikipedia.nix`, `wikipedia-backend.*`, `0001-use-libzim-backend.patch`, `icon.png`).
+  - Updated `AGENTS.md` to document the new modular conventions and the rule: *Never vendor or duplicate upstream projects in-tree; fetch via pinned `fetchFromGitHub`/`fetchurl` and apply targeted `.patch` files.*
+
+- **Upstream Duplication Eliminated in `rmpp-wikipedia`:**
+  - Removed vendored upstream QML files (`WikipediaButton.qml`, `WikipediaKeyboard.qml`, `WikipediaKeyboardKey.qml`, `WikipediaMain.qml`, `WikipediaSwipeArea.qml`, `wikipedia-main.cpp`, `wikipedia.qrc`).
+  - Fetched `dps/remarkable-wikipedia` directly at commit `7c48ade8fe485fdf1799fb641523148023963baa` via `fetchFromGitHub`.
+  - Replaced Qt 5-specific RM1 Wacom `EventFilter` and `XMLHttpRequest` with a minimal patch (`0001-use-libzim-backend.patch`) connecting directly to `WikipediaBackend` (`libzim`).
+
+- **AppLoad Automatic Boot Injection:**
+  - Added `before` option to `serviceModule` in `system.nix` and declared `before = [ "xochitl.service" ];` in `rmpp-config` service definition.
+  - Ensures `rmpp-config.service` applies XOVI drop-ins and AppLoad tiles before `xochitl` launches on boot.
+  - Added `/etc` submount unmounting in `activate.sh` to avoid `EBUSY` when vellum's `mount-rw` unmounts the overlay during boot unit installation.
+
 ## Dual-Reader Strategy: Kiwix Desktop & Native QML Wikipedia Reader
 
 We maintain two complementary readers for offline `.zim` knowledge bases on the Paper Pro, sharing the same storage directory (`/home/root/zim/*.zim`):

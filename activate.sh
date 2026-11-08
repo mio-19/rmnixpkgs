@@ -388,6 +388,12 @@ apply_profile() {
 install_boot_unit() {
 	[ -f "$gen/systemd/$BOOT_UNIT" ] || die "generation has no $BOOT_UNIT; declare it in rmpp.systemd.services"
 
+	# Unmount any active submounts under /etc (such as xovi's tmpfs on /etc/systemd/system/*.d)
+	# so that unmounting the /etc overlay does not fail with 'target is busy'.
+	for m in $(awk '$2 ~ "^/etc/" {print $2}' /proc/mounts 2>/dev/null); do
+		umount -q "$m" 2>/dev/null || true
+	done
+
 	restore() { :; }
 	if [ -x "$VELLUM_MOUNT_RW" ]; then
 		log "using vellum's mount-rw (mount-utils)"

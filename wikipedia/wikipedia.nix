@@ -1,11 +1,12 @@
 # Native Qt Quick offline Wikipedia reader linked to libzim for reMarkable Paper Pro
-# Base QML concept from https://github.com/dps/remarkable-wikipedia (MIT)
+# Upstream source: https://github.com/dps/remarkable-wikipedia (MIT)
 # Copyright (c) 2019 David Singleton
 # Integrated libzim C++ QObject backend eliminating kiwix-serve HTTP daemon.
 
 {
   lib,
   stdenv,
+  fetchFromGitHub,
   cmake,
   ninja,
   pkg-config,
@@ -16,21 +17,16 @@ stdenv.mkDerivation {
   pname = "rmpp-wikipedia";
   version = "1.0.0";
 
-  src = lib.fileset.toSource {
-    root = ./.;
-    fileset = lib.fileset.unions [
-      ./CMakeLists-wikipedia.txt
-      ./wikipedia-backend.h
-      ./wikipedia-backend.cpp
-      ./wikipedia-main.cpp
-      ./WikipediaMain.qml
-      ./WikipediaKeyboard.qml
-      ./WikipediaKeyboardKey.qml
-      ./WikipediaButton.qml
-      ./WikipediaSwipeArea.qml
-      ./wikipedia.qrc
-    ];
+  src = fetchFromGitHub {
+    owner = "dps";
+    repo = "remarkable-wikipedia";
+    rev = "7c48ade8fe485fdf1799fb641523148023963baa";
+    hash = "sha256-IXYmzBS1gFZlTwS9TURWXFpCoWflHS0LLW5sEWElgXE=";
   };
+
+  patches = [
+    ./0001-use-libzim-backend.patch
+  ];
 
   nativeBuildInputs = [
     cmake
@@ -46,7 +42,9 @@ stdenv.mkDerivation {
   ];
 
   preConfigure = ''
-    cp CMakeLists-wikipedia.txt CMakeLists.txt
+    cp ${./wikipedia-backend.h} wikipedia-backend.h
+    cp ${./wikipedia-backend.cpp} wikipedia-backend.cpp
+    cp ${./CMakeLists.txt} CMakeLists.txt
   '';
 
   meta = {

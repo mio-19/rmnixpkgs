@@ -3,24 +3,28 @@
 Conventions for this repository: Nix packages for the reMarkable Paper Pro
 (`ferrari`, aarch64), built from source where at all possible.
 
-The tree is flat by design — everything in it is about the Paper Pro, so there
-are no per-component subdirectories:
+The repository is structured into modular component directories:
 
 | Path | What |
 | --- | --- |
-| `flake.nix`, `default.nix` | flake entry point, and one module defining every package |
-| `os.nix` | the target reMarkable OS release: kernel source pin + stable patch chain, glibc/GCC/Qt ABI |
-| `aarch64-pkgs.nix` | the native aarch64-linux package set (cache.nixos.org trick) |
-| `wpewebkit.nix`, `rmweb.nix` | browser engine and browser app, both from source |
-| `kernel.nix` | reMarkable's kernel + Waydroid needs + etnaviv GPU driver + the upstream stable (security) chain |
-| `android.nix`, `android.py` | Waydroid session: private root, compositor, container, manual `rmpp-android` takeover |
-| `chromium.nix` | Chromium browser on e-ink: binary cache Chromium + source-built CDP driver & Quill viewer |
-| `einkbridge.nix`, `einkbridge.c`, `einkbridge-wire.h`, `quill-host.c` | our Wayland screencopy → e-paper bridge and its isolated vendor-display worker |
-| `quill.nix` | Quill, from source against the OS's Qt |
-| `system.nix`, `config.nix`, `config.example.*.nix`, `activate.sh` | declarative configuration: the module, this device's config, example configs, the activation script |
-| `nix-setup.sh` | device-side persistent-store setup script |
-| `test-*`, `check-waydroid-*` | flake checks (`nix flake check` on the aarch64 builder); never installed on the tablet |
-| `remarkable-paper-pro.md`, `TODO.md` | device notes; verified facts and open work |
+| `flake.nix`, `default.nix` | Flake entry point and top-level package definitions |
+| `os.nix` | Target reMarkable OS release: kernel source pin + stable patch chain, glibc/GCC/Qt ABI |
+| `aarch64-pkgs.nix` | Native aarch64-linux package set (cache.nixos.org trick) |
+| `system.nix`, `config.nix`, `config.example.*.nix`, `activate.sh` | Declarative system configuration module, device config, and activation script |
+| `nix-setup.sh` | Device-side persistent-store setup script |
+| `android/` | Waydroid session controller, container tools, and runtime checks |
+| `assets/` | Shared graphical assets and application icons |
+| `bridge/` | Wayland screencopy → e-paper bridge (`einkbridge`) and isolated Quill worker (`quill-host`) |
+| `browser/` | Web browsers on e-ink: Chromium CDP driver, source WPE WebKit, and rmweb |
+| `kernel/` | Target kernel derivation, DT/driver patches, security chain, and config checks |
+| `wikipedia/` | Native Qt Quick offline Wikipedia reader (`rmpp-wikipedia`) with libzim backend |
+| `remarkable-paper-pro.md`, `TODO.md` | Device notes; verified facts and open work |
+
+## Upstream projects and patches
+
+- **Do not duplicate or vendor whole upstream repositories in-tree.** When modifying an upstream project (e.g. `dps/remarkable-wikipedia`), fetch the source via `pkgs.fetchFromGitHub` or `pkgs.fetchurl` pinned to a specific commit or release.
+- Apply minimal, targeted patch files (`.patch`) in the derivation. Only keep custom addition files (such as novel backend C++ classes or integration shims) in the tree.
+- Patch files must not contain formatting-only changes; keep patches as small and clean as possible to ease rebasing on newer upstream commits.
 
 ## Provenance: keep the original link
 
