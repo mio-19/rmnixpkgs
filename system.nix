@@ -265,6 +265,23 @@ in
     android.enable = lib.mkEnableOption "the manual rmpp-android takeover service and AppLoad entry";
     chromium.enable = lib.mkEnableOption "the manual rmpp-chromium browser takeover service and AppLoad entry";
     kiwix.enable = lib.mkEnableOption "the Kiwix offline reader desktop app and AppLoad entry";
+    xovi = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Enable XOVI mod loader integration.";
+      };
+      autoStart = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Automatically start XOVI on boot once /home is mounted. Ensures xochitl is
+          injected with XOVI (LD_PRELOAD=/home/root/xovi/xovi.so) and restarted if needed
+          so that AppLoad and modifications appear in the menu automatically without
+          requiring triple-tap or manual intervention.
+        '';
+      };
+    };
     files = lib.mkOption {
       type = lib.types.attrsOf fileModule;
       default = { };
@@ -602,6 +619,11 @@ in
                 if cfg.vellum.onActivation.autoUpdate then "1" else "0"
               } > $out/vellum.options
               printf 'cleanup=%s\n' ${if cfg.vellum.onActivation.cleanup then "1" else "0"} >> $out/vellum.options
+            ''}
+
+            # XOVI auto-start intent, consumed by activation.
+            ${lib.optionalString (cfg.xovi.enable && cfg.xovi.autoStart) ''
+              : > $out/xovi.autostart
             ''}
 
             # Ownership manifest: the only paths activation may create or delete.

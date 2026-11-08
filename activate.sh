@@ -579,6 +579,41 @@ apply_vellum_maintenance() {
 	fi
 }
 
+# --- xovi / modifications auto-load -----------------------------------------
+
+# Ensures XOVI and its extensions (AppLoad, Librarian, etc.) are injected into
+# xochitl so modifications appear automatically in the menu on boot.
+apply_xovi() {
+	[ -f "$gen/xovi.autostart" ] || return 0
+	[ -x /home/root/xovi/start ] || return 0
+
+	# Restore xovi-tripletap.service if installed by vellum but missing from /etc
+	if [ -f /home/root/.vellum/share/tripletap/xovi-tripletap.service ] && [ ! -f /etc/systemd/system/xovi-tripletap.service ]; then
+		log "restoring xovi-tripletap.service"
+		cp /home/root/.vellum/share/tripletap/xovi-tripletap.service /etc/systemd/system/xovi-tripletap.service
+		mkdir -p /etc/systemd/system/multi-user.target.wants
+		ln -sf /etc/systemd/system/xovi-tripletap.service /etc/systemd/system/multi-user.target.wants/xovi-tripletap.service
+		if command -v systemctl >/dev/null 2>&1; then
+			systemctl daemon-reload || true
+			systemctl start xovi-tripletap.service || true
+		fi
+	fi
+
+	# Check if xochitl is running with XOVI preloaded. On a fresh boot, /etc
+	# was wiped clean so xochitl is running stock without XOVI.
+	if command -v systemctl >/dev/null 2>&1; then
+		if systemctl is-active --quiet xochitl.service; then
+			if ! systemctl show xochitl.service --property=Environment 2>/dev/null | grep -q "LD_PRELOAD=/home/root/xovi/xovi.so"; then
+				log "starting XOVI to load modifications (AppLoad) into xochitl menu..."
+				/home/root/xovi/start
+			fi
+		else
+			log "starting XOVI..."
+			/home/root/xovi/start
+		fi
+	fi
+}
+
 # --- main -----------------------------------------------------------------
 
 [ "$mode" = rollback-kernel ] && rollback_kernel
@@ -593,6 +628,7 @@ apply_units
 apply_appload
 apply_vellum
 apply_vellum_maintenance
+apply_xovi
 apply_profile
 cp "$gen/manifest" "$STATE/manifest"
 log "done (state: $STATE, profile: $PROFILE)"

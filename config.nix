@@ -42,6 +42,12 @@
       wantedBy = "multi-user.target";
     };
 
+    # Automatically load modifications like AppLoad in the menu on boot.
+    xovi = {
+      enable = true;
+      autoStart = true;
+    };
+
     # rmweb under XOVI/AppLoad: an external app entry, so it appears as a tile
     # next to everything vellum installs. The tree is the writable copy under
     # /home/root/rmweb (see remarkable-paper-pro.md), not the store path, because

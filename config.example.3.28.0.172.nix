@@ -78,6 +78,19 @@
     };
 
     # -------------------------------------------------------------------------
+    # XOVI / Modifications auto-load on boot
+    # -------------------------------------------------------------------------
+    # By default on reMarkable OS, /etc is a tmpfs overlay and /home is decrypted
+    # after the initial stock xochitl starts. Enabling xovi.autoStart ensures
+    # rmpp-config injects XOVI (xovi.so) and reloads xochitl on boot, so that
+    # AppLoad, Librarian, and other UI modifications appear in the menu
+    # automatically without needing a manual start or power-button triple-tap.
+    xovi = {
+      enable = true;
+      autoStart = true;
+    };
+
+    # -------------------------------------------------------------------------
     # AppLoad apps
     # -------------------------------------------------------------------------
     # Declares tiles in the XOVI AppLoad launcher (/home/root/xovi/exthome/appload/).
