@@ -233,31 +233,54 @@ let
     ${lib.optionalString (items != [ ]) ''printf '%s\n' ${lib.escapeShellArgs items} >> ${file}''}
   '';
 
-  # Kiwix desktop Qt launcher: runs directly on the device with offline ZIM content
-  # through AppLoad's QTFB shared framebuffer integration (qtfb-shim.so), without
-  # requiring a headless web server daemon.
+  # Kiwix desktop Qt launcher: runs directly on the device with offline ZIM content.
+  # Because QtWebEngine (Chromium) requires offscreen surfaces that linuxfb lacks,
+  # the launcher runs the native kiwix-desktop Qt app with its built-in VNC QPA
+  # (-platform vnc:size=1620x2160,port=5900) and displays it directly into AppLoad's
+  # shared-memory framebuffer (QTFB) using the high-performance native vnsee client.
   kiwixLauncher = pkgs.writeShellScript "kiwix-appload" ''
-    set -u
+    set -e
     ZIM_DIR="/home/root/zim"
     mkdir -p "$ZIM_DIR"
 
     LOG="/home/root/kiwix/kiwix.log"
     mkdir -p /home/root/kiwix
-    exec > "$LOG" 2>&1
+    exec >> "$LOG" 2>&1
 
     echo "[kiwix] Starting at $(date)..."
     echo "[kiwix] QTFB_KEY=''${QTFB_KEY:-none}"
 
+    cleanup() {
+      [ -n "''${KIWIX_PID:-}" ] && kill "''${KIWIX_PID}" 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
+
     ZIM=$(find "$ZIM_DIR" -maxdepth 1 -name "*.zim" 2>/dev/null | head -n 1)
     echo "[kiwix] ZIM=''${ZIM:-none}"
 
-    export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:''${LD_LIBRARY_PATH:-}"
-    export LD_PRELOAD="/home/root/shims/qtfb-shim.so"
-    export QT_QPA_PLATFORM="linuxfb"
     export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage"
     export HOME="/home/root"
 
-    exec ${pkgs.kiwix}/bin/kiwix-desktop ''${ZIM:+"$ZIM"}
+    ${pkgs.kiwix}/bin/kiwix-desktop \
+      -platform "vnc:size=1620x2160,port=5900" \
+      ''${ZIM:+"$ZIM"} >> "$LOG" 2>&1 &
+    KIWIX_PID=$!
+
+    for i in $(seq 1 50); do
+      if netstat -tl 2>/dev/null | grep -q ':5900' || nc -z 127.0.0.1 5900 2>/dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    echo "[kiwix] VNC server ready with PID $KIWIX_PID; launching VNSee display bridge..."
+
+    if [ -x /home/root/xovi/exthome/appload/vnsee/vnsee ]; then
+      exec /home/root/xovi/exthome/appload/vnsee/vnsee 127.0.0.1 5900
+    else
+      echo "[kiwix] ERROR: /home/root/xovi/exthome/appload/vnsee/vnsee not found"
+      wait "$KIWIX_PID"
+    fi
   '';
 in
 {
@@ -496,14 +519,13 @@ in
           icon = ./kiwix-icon.png;
           qtfb = true;
           environment = {
-            LD_PRELOAD = "/home/root/shims/qtfb-shim.so";
-            QTFB_SHIM_RESPECT_APP_REFRESH_MODES = "true";
-            QTFB_SHIM_RESPECT_FULL_REFRESH_REQUESTS = "true";
-            QTFB_SHIM_MODEL = "RM1";
+            VNSEE_WAVEFORM_MODE = "STANDARD";
+            VNSEE_ENCODING = "COPYRECT";
             HOME = "/home/root";
           };
         };
       });
+    rmpp.vellum.packages = lib.optionals cfg.kiwix.enable [ "vnsee-qtfb" ];
     assertions = [
       {
         assertion = !cfg.android.enable || rmppAndroid != null;

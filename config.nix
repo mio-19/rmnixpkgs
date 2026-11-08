@@ -96,6 +96,7 @@
         "tripletap"
         "vellum"
         "vellum-bash-completion"
+        "vnsee-qtfb"
         "xovi"
         "xovi-extensions"
         "xovi-message-broker"
