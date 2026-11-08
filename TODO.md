@@ -12,9 +12,43 @@ real aarch64 hardware (OrbStack `nixos` VM) — `.#rmpp_tools`,
 `.#rmpp_rmweb_prebuilt`, `.#rmpp_rmweb` (engine and app from source) and
 `.#rmpp_kernel`, the last one both as the published vendor tree and as
 6.12.115-waydroid with the stable chain enabled explicitly (config.nix defaults
-to the vendor 6.12.49-waydroid kernel). Nothing has
-run on the tablet yet, and `rmpp_rmweb` has never rendered a frame (the display
-path below is still open).
+to the vendor 6.12.49-waydroid kernel). The 6.12.49-waydroid kernel and declarative
+configuration are now live, active, and verified on real tablet hardware running
+reMarkable OS 3.28.0.172 on Slot B.
+
+## Firmware 3.28 Deployment & Device Validation (2026-11-08)
+
+- **Multi-Firmware Support (3.27 & 3.28):** `os.nix` now houses a release registry
+  supporting both `3.27` and `3.28` releases with exact kernel tarball pins,
+  SHA256 hashes, device tree targets, and ABI definitions (`gcc13Stdenv`). Selected
+  via declarative option `rmpp.os.version` in `config.nix`.
+- **Kernel Build Fixes for 3.28:**
+  - Added `zstd` to `nativeBuildInputs` in `kernel.nix` because 3.28's
+    `imx8mm_ferrari_defconfig` enables `CONFIG_MODULE_COMPRESS_ZSTD=y`.
+  - Retained `./scripts/config --disable CONFIG_RELR` to avoid arm64 relocation
+    packing faults on U-Boot raw Image boot.
+  - Built with GCC 13.5.0 (`gcc13Stdenv`) matching reMarkable's Yocto GCC 13.4.0 toolchain.
+- **Hardware Watchdog & Failover Root Cause:**
+  - Hardware LPGPR registers (`/sys/devices/platform/lpgpr/roota_errcnt` and `rootb_errcnt`)
+    track consecutive boot failures. When an errcnt reaches 3, U-Boot flags the partition
+    bad and automatically switches to the opposite slot passing `systemd.setenv=RESCUE=1`.
+  - The stock OS only clears error counters at clean shutdown via
+    `/usr/sbin/rm-reset-boot-count.sh` (which skips clearing if `/tmp/rm-emergency` exists).
+  - The previous 3-boot loop on Slot B was caused by a systemd mount ordering cycle in
+    `nix.mount`: without `DefaultDependencies=no`, `nix.mount` acquired an automatic
+    `Before=local-fs.target` dependency while requiring `home.mount` (which is opened by
+    `homecryptor` after `basic.target`). This circular dependency tripped `emergency.target`,
+    which runs `/usr/sbin/rm-emergency.sh` and immediately reboots the device without
+    clearing the error counter.
+  - Fixed by adding `DefaultDependencies=no`, `Conflicts=umount.target`, and `Before=umount.target`
+    to `nix.mount` in `nix-setup.sh`.
+- **Live Device Verification on 3.28.0.172 (Slot B):**
+  - Kernel: `Linux imx8mm-ferrari 6.12.49-waydroid #1 SMP PREEMPT Sun Nov 8 07:02:58 UTC 2026 aarch64`
+  - OS Release: `IMG_VERSION="3.28.0.172"`, active slot `b`, `roota_errcnt=0`, `rootb_errcnt=0`.
+  - GPU: Vivante GC600 rev 4653 bound and initialized by `etnaviv` (`/dev/dri/renderD128` active).
+  - Android/Waydroid support: `binderfs` active (`nodev binder`), CMA pool 640 MiB allocated.
+  - Declarative boot unit: `nix.mount` and `rmpp-config.service` active and verified.
+  - Vellum: 14 packages managed and synchronized with `config.nix`.
 
 ## Local Waydroid implementation (2026-11-07)
 
