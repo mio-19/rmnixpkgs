@@ -108,8 +108,8 @@ ssh root@10.11.99.1 "$GEN_PATH/activate --install-boot-unit"
 - **Zero Boot Blocking:** `rmpp-config.service` runs decoupled from `xochitl.service` (`Before=xochitl.service` is eliminated), and `apply_vellum` is skipped during early boot. The boot sequence finishes in `< 0.2` seconds without waiting on offline network timeouts.
 - **XOVI / AppLoad Integration:** Registers external app tiles under `/home/root/xovi/exthome/appload/` for:
   - `Wikipedia` (native e-ink reader with `libzim`)
-  - `Kiwix` (Kiwix Desktop with high-DPI scaling)
-  - `rmweb` (WPE WebKit browser)
+  - `Kiwix` (Kiwix Desktop with high-DPI scaling `1.15x` and touch-drag scrolling simulation)
+  - `rmweb` (WPE WebKit browser runtime automatically deployed and managed at `/home/root/rmweb` with icon tile)
   - `rmpp-android` (Waydroid container session)
 - **Host Key Protection:** Ensures `/etc/dropbear` bind-mounts remain intact during rootfs remounts so SSH sessions never disconnect.
 
