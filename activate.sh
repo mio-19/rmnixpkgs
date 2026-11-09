@@ -149,6 +149,41 @@ check_os() {
 	esac
 }
 
+ensure_dropbear_keys() {
+	if [ -d /home/root/.dropbear ] && ! awk '$2 == "/etc/dropbear" { found = 1 } END { exit !found }' /proc/mounts 2>/dev/null; then
+		mkdir -p /etc/dropbear
+		mount --bind /home/root/.dropbear /etc/dropbear 2>/dev/null || true
+	fi
+}
+
+_remounted_root_rw=0
+
+ensure_etc_rw() {
+	[ "$_remounted_root_rw" -eq 1 ] && return 0
+	if ! touch /etc/.rmpp_rw_test 2>/dev/null; then
+		if [ -x "$VELLUM_MOUNT_RW" ]; then
+			"$VELLUM_MOUNT_RW" || die "vellum mount-rw failed"
+		else
+			mount -o remount,rw / || die "could not remount / read-write"
+		fi
+		_remounted_root_rw=1
+	else
+		rm -f /etc/.rmpp_rw_test 2>/dev/null || true
+	fi
+}
+
+restore_etc_ro() {
+	if [ "$_remounted_root_rw" -eq 1 ]; then
+		if [ -x "$VELLUM_MOUNT_RESTORE" ]; then
+			"$VELLUM_MOUNT_RESTORE" 2>/dev/null || true
+		else
+			mount -o remount,ro / 2>/dev/null || true
+		fi
+		ensure_dropbear_keys
+		_remounted_root_rw=0
+	fi
+}
+
 # --- ownership -------------------------------------------------------------
 
 # Delete a path this configuration used to own. Anything outside the two
@@ -170,6 +205,9 @@ remove_owned() {
 		fi
 		rm -rf "$path"
 	elif [ -e "$path" ] || [ -L "$path" ]; then
+		case "$path" in
+		/etc/*) ensure_etc_rw ;;
+		esac
 		rm -f "$path"
 	fi
 }
@@ -192,6 +230,10 @@ apply_etc() {
 	while read -r file_mode rel; do
 		[ -n "$rel" ] || continue
 		[ -f "$gen/etc/$rel" ] || continue
+		if [ -f "/etc/$rel" ] && cmp -s "$gen/etc/$rel" "/etc/$rel"; then
+			continue
+		fi
+		ensure_etc_rw
 		install -D -m "$file_mode" "$gen/etc/$rel" "/etc/$rel"
 	done <"$gen/etc.modes"
 }
@@ -207,6 +249,10 @@ apply_masks() {
 			warn "no $unit exists on this OS; nothing to mask"
 			continue
 		fi
+		if [ -L "/etc/systemd/system/$unit" ] && [ "$(readlink "/etc/systemd/system/$unit")" = "/dev/null" ]; then
+			continue
+		fi
+		ensure_etc_rw
 		ln -sf /dev/null "/etc/systemd/system/$unit"
 		if command -v systemctl >/dev/null 2>&1; then
 			systemctl is-active --quiet "$unit" && systemctl stop "$unit" || true
@@ -220,14 +266,26 @@ apply_units() {
 	[ -d "$gen/systemd" ] || return 0
 	for unit in "$gen/systemd"/*.service; do
 		[ -f "$unit" ] || continue
-		install -D -m 644 "$unit" "/etc/systemd/system/$(basename "$unit")"
+		dest="/etc/systemd/system/$(basename "$unit")"
+		if [ -f "$dest" ] && cmp -s "$unit" "$dest"; then
+			:
+		else
+			ensure_etc_rw
+			install -D -m 644 "$unit" "$dest"
+		fi
 	done
 
 	if [ -s "$gen/systemd.enable" ]; then
 		while read -r wants_dir unit_name; do
 			[ -n "$unit_name" ] || continue
-			mkdir -p "/etc/systemd/system/$wants_dir"
-			ln -sf "/etc/systemd/system/$unit_name" "/etc/systemd/system/$wants_dir/$unit_name"
+			target="/etc/systemd/system/$wants_dir/$unit_name"
+			if [ -L "$target" ] && [ "$(readlink "$target")" = "/etc/systemd/system/$unit_name" ]; then
+				:
+			else
+				ensure_etc_rw
+				mkdir -p "/etc/systemd/system/$wants_dir"
+				ln -sf "/etc/systemd/system/$unit_name" "$target"
+			fi
 		done <"$gen/systemd.enable"
 	fi
 
@@ -394,13 +452,6 @@ install_boot_unit() {
 	for m in $(awk '$2 ~ "^/etc/systemd/" {print $2}' /proc/mounts 2>/dev/null); do
 		umount -q "$m" 2>/dev/null || true
 	done
-
-	ensure_dropbear_keys() {
-		if [ -d /home/root/.dropbear ] && ! awk '$2 == "/etc/dropbear" { found = 1 } END { exit !found }' /proc/mounts 2>/dev/null; then
-			mkdir -p /etc/dropbear
-			mount --bind /home/root/.dropbear /etc/dropbear 2>/dev/null || true
-		fi
-	}
 
 	restore() { ensure_dropbear_keys; }
 	if [ -x "$VELLUM_MOUNT_RW" ]; then
@@ -631,6 +682,8 @@ apply_xovi() {
 
 # --- main -----------------------------------------------------------------
 
+trap 'restore_etc_ro' EXIT HUP INT TERM
+
 [ "$mode" = rollback-kernel ] && rollback_kernel
 
 log "applying generation $gen"
@@ -646,6 +699,8 @@ apply_vellum_maintenance
 apply_xovi
 apply_profile
 cp "$gen/manifest" "$STATE/manifest"
+restore_etc_ro
+trap - EXIT HUP INT TERM
 log "done (state: $STATE, profile: $PROFILE)"
 
 [ "$mode" = install-unit ] && install_boot_unit
