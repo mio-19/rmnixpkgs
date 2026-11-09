@@ -80,6 +80,9 @@ EOF
 }
 
 ensure_dropbear_keys() {
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl start etc-dropbear.mount 2>/dev/null || true
+	fi
 	if [ -d /home/root/.dropbear ] && ! awk '$2 == "/etc/dropbear" { found = 1 } END { exit !found }' /proc/mounts 2>/dev/null; then
 		mkdir -p /etc/dropbear
 		mount --bind /home/root/.dropbear /etc/dropbear 2>/dev/null || true
