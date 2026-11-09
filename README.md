@@ -13,3 +13,7 @@ A more powerful aarch64 machine is used.
 Working packages built with the nix environment:
 
 + rmweb
+
+Partially working packages build with nix:
+
++ kiwix via [vnsee](https://github.com/matteodelabre/vnsee)
