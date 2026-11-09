@@ -1,6 +1,6 @@
 --- a/main.cpp
 +++ b/main.cpp
-@@ -1,43 +1,35 @@
+@@ -1,43 +1,37 @@
  #include <QGuiApplication>
  #include <QQmlApplicationEngine>
 -// Added for reMarkable support
@@ -49,16 +49,24 @@
      QQmlApplicationEngine engine;
 +    engine.rootContext()->setContextProperty("zimBackend", &backend);
      engine.load(QUrl(QStringLiteral("qrc:/main.qml")));
-     if (engine.rootObjects().isEmpty())
+-    if (engine.rootObjects().isEmpty())
++    if (engine.rootObjects().isEmpty()) {
++        qWarning() << "Failed to load QML root object";
          return -1;
 -    QObject* root = engine.rootObjects().first();
 -    filter->root = (QQuickItem*)root;
++    }
  
      return app.exec();
  }
 --- a/main.qml
 +++ b/main.qml
-@@ -5,11 +5,11 @@
+@@ -1,15 +1,14 @@
+-import QtQuick 2.6
+-import QtQuick.Window 2.2
++import QtQuick
+ import "."
+ 
  Window {
      visible: true;
      title: qsTr("qtwikipedia")
@@ -73,7 +81,7 @@
      property string homePage: "";
      readonly property int dummy: onLoad();
      property var backStack: [];
-@@ -26,56 +26,25 @@
+@@ -26,56 +25,25 @@
  
      function onLoad() {
          log.text = "<h1>reMarkable Wikipedia</h1>";
@@ -144,7 +152,7 @@
      }
  
      function showRequestInfo(text) {
-@@ -141,74 +110,25 @@
+@@ -141,74 +109,25 @@
  
      function retrieve(page) {
          log.y = 100;
@@ -235,7 +243,7 @@
      }
  
      SwipeArea {
-@@ -284,10 +204,11 @@
+@@ -284,10 +203,11 @@
                  }
          Rectangle {
              id: qbox;
@@ -248,3 +256,14 @@
              color: "white";
              border.color: "black";
              border.width: 3;
+--- a/KeyboardKey.qml
++++ b/KeyboardKey.qml
+@@ -26,7 +26,7 @@
+     property bool repeatOnHold: true
+     property int holdInterval: 100
+     property int key: 0
+-    property string value: null
++    property string value: ""
+     property int size: 1
+     property int basesize: 90
+     property int fontsize: 8
