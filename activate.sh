@@ -79,6 +79,41 @@ the boot unit, which an OS update removes (run --install-boot-unit again).
 EOF
 }
 
+ensure_dropbear_keys() {
+	if [ -d /home/root/.dropbear ] && ! awk '$2 == "/etc/dropbear" { found = 1 } END { exit !found }' /proc/mounts 2>/dev/null; then
+		mkdir -p /etc/dropbear
+		mount --bind /home/root/.dropbear /etc/dropbear 2>/dev/null || true
+	fi
+}
+
+_remounted_root_rw=0
+
+ensure_etc_rw() {
+	[ "$_remounted_root_rw" -eq 1 ] && return 0
+	if ! touch /etc/.rmpp_rw_test 2>/dev/null; then
+		if [ -x "${VELLUM_MOUNT_RW:-}" ]; then
+			"$VELLUM_MOUNT_RW" || die "vellum mount-rw failed"
+		else
+			mount -o remount,rw / || die "could not remount / read-write"
+		fi
+		_remounted_root_rw=1
+	else
+		rm -f /etc/.rmpp_rw_test 2>/dev/null || true
+	fi
+}
+
+restore_etc_ro() {
+	if [ "$_remounted_root_rw" -eq 1 ]; then
+		if [ -x "${VELLUM_MOUNT_RESTORE:-}" ]; then
+			"$VELLUM_MOUNT_RESTORE" 2>/dev/null || true
+		else
+			mount -o remount,ro / 2>/dev/null || true
+		fi
+		ensure_dropbear_keys
+		_remounted_root_rw=0
+	fi
+}
+
 mode=apply
 gen=
 for arg in "$@"; do
@@ -147,41 +182,6 @@ check_os() {
 		warn "device runs kernel $have_kernel, generation expects $want_kernel-waydroid"
 		;;
 	esac
-}
-
-ensure_dropbear_keys() {
-	if [ -d /home/root/.dropbear ] && ! awk '$2 == "/etc/dropbear" { found = 1 } END { exit !found }' /proc/mounts 2>/dev/null; then
-		mkdir -p /etc/dropbear
-		mount --bind /home/root/.dropbear /etc/dropbear 2>/dev/null || true
-	fi
-}
-
-_remounted_root_rw=0
-
-ensure_etc_rw() {
-	[ "$_remounted_root_rw" -eq 1 ] && return 0
-	if ! touch /etc/.rmpp_rw_test 2>/dev/null; then
-		if [ -x "$VELLUM_MOUNT_RW" ]; then
-			"$VELLUM_MOUNT_RW" || die "vellum mount-rw failed"
-		else
-			mount -o remount,rw / || die "could not remount / read-write"
-		fi
-		_remounted_root_rw=1
-	else
-		rm -f /etc/.rmpp_rw_test 2>/dev/null || true
-	fi
-}
-
-restore_etc_ro() {
-	if [ "$_remounted_root_rw" -eq 1 ]; then
-		if [ -x "$VELLUM_MOUNT_RESTORE" ]; then
-			"$VELLUM_MOUNT_RESTORE" 2>/dev/null || true
-		else
-			mount -o remount,ro / 2>/dev/null || true
-		fi
-		ensure_dropbear_keys
-		_remounted_root_rw=0
-	fi
 }
 
 # --- ownership -------------------------------------------------------------
@@ -336,7 +336,7 @@ apply_appload() {
 #   * failures warn instead of aborting: activation also runs at boot, and an
 #     offline tablet still needs its units and AppLoad entries.
 apply_vellum() {
-	[ "$mode" = boot ] && return 0
+	[ "${mode:-}" = boot ] && return 0
 	[ -f "$gen/vellum.packages" ] || return 0
 	mkdir -p "$STATE"
 
@@ -497,7 +497,7 @@ install_boot_unit() {
 # so 3 failed boots automatically roll back to the other slot.
 # See https://github.com/MaximeRivest/android-on-remarkable-paper-pro/blob/master/kernel/install-kernel.sh
 apply_kernel() {
-	[ "$mode" = boot ] && return 0
+	[ "${mode:-}" = boot ] && return 0
 	[ -d "$gen/kernel" ] || return 0
 	[ -f "$gen/kernel/fitImage" ] || return 0
 
@@ -595,14 +595,14 @@ rollback_kernel() {
 
 # Runs post-OS-upgrade tasks and maintenance needed by Vellum and XOVI.
 apply_vellum_maintenance() {
-	[ "$mode" = boot ] && return 0
+	[ "${mode:-}" = boot ] && return 0
 
 	# 1. Vellum OS upgrade sync and re-enablement
 	if [ -x "$VELLUM" ]; then
 		vellum_osver=""
 		[ -f /home/root/.vellum/state/osver ] && vellum_osver=$(cat /home/root/.vellum/state/osver 2>/dev/null || true)
-		if [ -n "$have_os" ] && [ -n "$vellum_osver" ] && [ "$vellum_osver" != "$have_os" ]; then
-			log "running vellum maintenance: syncing packages with OS upgrade ($vellum_osver -> $have_os)..."
+		if [ -n "${have_os:-}" ] && [ -n "$vellum_osver" ] && [ "$vellum_osver" != "${have_os:-}" ]; then
+			log "running vellum maintenance: syncing packages with OS upgrade ($vellum_osver -> ${have_os:-})..."
 			printf 'y\n' | "$VELLUM" upgrade 2>/dev/null || warn "vellum upgrade failed"
 			"$VELLUM" reenable 2>/dev/null || warn "vellum reenable failed"
 		elif "$VELLUM" list 2>&1 | grep -q "reenable has not been run"; then
@@ -621,7 +621,7 @@ apply_vellum_maintenance() {
 			rebuild_needed=1
 		elif [ -f /usr/bin/xochitl ] && [ /usr/bin/xochitl -nt "$qrr_hashtab" ]; then
 			rebuild_needed=1
-		elif [ -f "$STATE/hashtab-os" ] && [ "$(cat "$STATE/hashtab-os" 2>/dev/null)" != "$have_os" ]; then
+		elif [ -f "$STATE/hashtab-os" ] && [ "$(cat "$STATE/hashtab-os" 2>/dev/null)" != "${have_os:-}" ]; then
 			rebuild_needed=1
 		fi
 
@@ -640,7 +640,7 @@ apply_vellum_maintenance() {
 				fi
 			fi
 			mkdir -p "$STATE"
-			printf '%s\n' "$have_os" >"$STATE/hashtab-os"
+			printf '%s\n' "${have_os:-}" >"$STATE/hashtab-os"
 		fi
 	fi
 }
@@ -680,6 +680,32 @@ apply_xovi() {
 	fi
 }
 
+# --- rmweb runtime ----------------------------------------------------------
+
+# Deploys rmweb WPE WebKit browser runtime to /home/root/rmweb.
+# Binaries and assets are symlinked directly to the Nix store to minimize flash wear,
+# while launcher scripts and logs live in writable /home/root/rmweb.
+apply_rmweb() {
+	[ -d "$gen/rmweb" ] || return 0
+	target="/home/root/rmweb"
+	mkdir -p "$target"
+	bundle="$gen/rmweb"
+	for dir in lib bin libexec share appload; do
+		if [ -d "$bundle/$dir" ]; then
+			ln -sfn "$bundle/$dir" "$target/$dir"
+		fi
+	done
+	[ -f "$bundle/icon.svg" ] && ln -sfn "$bundle/icon.svg" "$target/icon.svg"
+	[ -f "$bundle/VERSION" ] && cp -f "$bundle/VERSION" "$target/VERSION"
+	for script in rmweb appload-entry.sh rmweb-env.sh install.sh; do
+		if [ -f "$bundle/$script" ]; then
+			cp -f "$bundle/$script" "$target/$script"
+			chmod 755 "$target/$script"
+		fi
+	done
+	log "rmweb runtime configured at $target"
+}
+
 # --- main -----------------------------------------------------------------
 
 trap 'restore_etc_ro' EXIT HUP INT TERM
@@ -694,6 +720,7 @@ apply_etc
 apply_masks
 apply_units
 apply_appload
+apply_rmweb
 apply_vellum
 apply_vellum_maintenance
 apply_xovi

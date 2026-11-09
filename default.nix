@@ -56,6 +56,7 @@
             rmppAndroidIcon = "${upstream}/device/icon.png";
             rmppChromium = config.packages.rmpp_chromium;
             rmppChromiumIcon = "${config.packages.rmpp_chromium.src}/chromium/icon.png";
+            rmppRmwebPrebuilt = config.packages.rmpp_rmweb_prebuilt;
             rmppWikipedia = config.packages.rmpp_wikipedia;
             inherit rmppKernel;
           };

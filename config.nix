@@ -48,23 +48,9 @@
       autoStart = true;
     };
 
-    # rmweb under XOVI/AppLoad: an external app entry, so it appears as a tile
-    # next to everything vellum installs. The tree is the writable copy under
-    # /home/root/rmweb (see remarkable-paper-pro.md), not the store path, because
-    # the launcher writes its log and lock next to itself.
-    #
-    # qtfb stays false until rmweb speaks QTFB; with it true, AppLoad allocates a
-    # shared-memory framebuffer (https://github.com/asivery/rm-appload) and hands
-    # the ID to the app as QTFB_KEY, which replaces the closed epaper QPA.
-    appload.apps.rmweb = {
-      name = "rmweb";
-      application = "/home/root/rmweb/appload-entry.sh";
-      environment = {
-        RMWEB_ROOT = "/home/root/rmweb";
-      };
-      disablesWindowedMode = true;
-      qtfb = false;
-    };
+    # rmweb under XOVI/AppLoad: WPE WebKit browser for e-ink.
+    # Automatically managed by activation script and deployed to /home/root/rmweb.
+    rmweb.enable = true;
 
     # Kiwix desktop Qt reader (https://github.com/kiwix/kiwix-desktop) under
     # AppLoad via QTFB: runs directly on the device with offline ZIM content.
@@ -93,7 +79,6 @@
         "ghostbuster"
         "hide-dev-mode-icon"
         "koreader"
-        "librarian"
         "mount-utils"
         "netsurf"
         "qt-resource-rebuilder"

@@ -22,6 +22,7 @@
   rmppAndroidIcon ? null,
   rmppChromium ? null,
   rmppChromiumIcon ? null,
+  rmppRmwebPrebuilt ? null,
   rmppWikipedia ? null,
   rmppKernel ? null,
   ...
@@ -266,9 +267,9 @@ let
     echo "[kiwix] ZIM=''${ZIM:-none}"
 
     export QT_ENABLE_HIGHDPI_SCALING=1
-    export QT_SCALE_FACTOR=1.75
-    export QT_FONT_DPI=226
-    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage --force-device-scale-factor=1.75"
+    export QT_AUTO_SCREEN_SCALE_FACTOR=1
+    export QT_SCALE_FACTOR=1.15
+    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage --force-device-scale-factor=1.15 --touch-events=enabled --simulate-touch-screen-with-mouse"
     export HOME="/home/root"
 
     ${pkgs.kiwix}/bin/kiwix-desktop \
@@ -346,6 +347,7 @@ in
     android.enable = lib.mkEnableOption "the manual rmpp-android takeover service and AppLoad entry";
     chromium.enable = lib.mkEnableOption "the manual rmpp-chromium browser takeover service and AppLoad entry";
     kiwix.enable = lib.mkEnableOption "the Kiwix offline reader desktop app and AppLoad entry";
+    rmweb.enable = lib.mkEnableOption "the rmweb WPE WebKit e-ink browser and AppLoad entry";
     wikipedia.enable = lib.mkEnableOption "the native QML Wikipedia offline reader with direct libzim backend and AppLoad entry";
     xovi = {
       enable = lib.mkOption {
@@ -587,6 +589,19 @@ in
           };
         };
       })
+      (lib.mkIf cfg.rmweb.enable {
+        rmweb = {
+          name = "rmweb";
+          application = "/home/root/rmweb/appload-entry.sh";
+          workingDirectory = "/home/root/rmweb";
+          icon = ./assets/rmweb.png;
+          qtfb = false;
+          disablesWindowedMode = true;
+          environment = {
+            RMWEB_ROOT = "/home/root/rmweb";
+          };
+        };
+      })
       (lib.mkIf cfg.wikipedia.enable {
         wikipedia = {
           name = "Wikipedia";
@@ -619,6 +634,10 @@ in
       {
         assertion = !cfg.wikipedia.enable || rmppWikipedia != null;
         message = "rmpp.wikipedia.enable requires rmppWikipedia";
+      }
+      {
+        assertion = !cfg.rmweb.enable || rmppRmwebPrebuilt != null;
+        message = "rmpp.rmweb.enable requires rmppRmwebPrebuilt";
       }
       {
         assertion = lib.all safeRelativePath (lib.attrNames cfg.files);
@@ -738,6 +757,11 @@ in
             # Kernel build (fitImage and modules) when install is enabled.
             ${lib.optionalString (cfg.kernel.install && rmppKernel != null) ''
               ln -s ${rmppKernel} $out/kernel
+            ''}
+
+            # rmweb bundle when enabled.
+            ${lib.optionalString (cfg.rmweb.enable && rmppRmwebPrebuilt != null) ''
+              ln -s ${rmppRmwebPrebuilt} $out/rmweb
             ''}
 
             # What this generation was built for, readable on the device:
